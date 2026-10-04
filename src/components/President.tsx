@@ -1,16 +1,19 @@
 "use client";
 import clsx from "clsx";
 import { motion } from "motion/react";
+import { useState } from "react";
 import { useCorrida, usePanorama } from "@/hooks/data";
 import { fmtInt, fmtPct, soHora } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
 import type { Candidato, Corrida, ResumoUF } from "@/lib/tse/types";
 import { BrazilMap } from "./BrazilMap";
+import { MunicipalMap } from "./MunicipalMap";
 import { Cronometro, hms, useFaseApuracao } from "./chrome";
 import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, Vazio } from "./ui";
 
 export function PresidentSection() {
   const { data, error, isLoading } = usePanorama("presidente");
+  const [modoMapa, setModoMapa] = useState<"mun" | "uf">("mun");
   // o total nacional vem do endpoint próprio (1 arquivo, atualiza a cada 5 s); usa o mais avançado dos dois
   const { data: br } = useCorrida("presidente", "br");
   const pan = data?.nacional;
@@ -33,17 +36,36 @@ export function PresidentSection() {
           {nac && nac.status !== "aguardando" && <FaceOff corrida={nac} />}
         </Panel>
         <Panel className="flex flex-col p-6 sm:p-8 xl:col-span-5">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="kicker">Quem lidera em cada estado</div>
+              <div className="kicker">{modoMapa === "mun" ? "Quem lidera em cada cidade" : "Quem lidera em cada estado"}</div>
               <div className="font-display mt-2 text-xl font-semibold">Mapa da apuração</div>
             </div>
-            <span className="chip text-muted">PRESIDENTE</span>
+            <div className="flex rounded-full border border-white/10 bg-white/[0.03] p-1">
+              {(["mun", "uf"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setModoMapa(m)}
+                  className={clsx(
+                    "rounded-full px-3.5 py-1 text-[12px] transition",
+                    modoMapa === m ? "bg-white text-black" : "text-muted hover:text-text",
+                  )}
+                >
+                  {m === "mun" ? "Municípios" : "Estados"}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="flex flex-1 items-center">
-            {data ? <BrazilMap ufs={data.ufs} className="mx-auto w-full max-w-[560px]" /> : <Skeleton className="aspect-square w-full" />}
-          </div>
-          {data && <LegendaMapa ufs={data.ufs} />}
+          {modoMapa === "mun" ? (
+            <MunicipalMap className="flex-1" />
+          ) : (
+            <>
+              <div className="flex flex-1 items-center">
+                {data ? <BrazilMap ufs={data.ufs} className="mx-auto w-full max-w-[560px]" /> : <Skeleton className="aspect-square w-full" />}
+              </div>
+              {data && <LegendaMapa ufs={data.ufs} />}
+            </>
+          )}
         </Panel>
       </div>
       {nac && nac.status !== "aguardando" && <StatsStrip corrida={nac} />}
@@ -159,6 +181,9 @@ function FaceOff({ corrida }: { corrida: Corrida }) {
                 <div className="mt-1.5 flex items-center gap-2">
                   <Bar pct={c.pct * 2} cor={corPartido(c.partido)} glow={false} className="!h-1" />
                   <span className="w-10 text-right font-mono text-[10px] text-dim">{c.partido}</span>
+                </div>
+                <div className="mt-1 font-mono text-[10.5px] text-dim">
+                  <Num value={c.votos} /> votos
                 </div>
               </div>
             </motion.div>

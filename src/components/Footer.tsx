@@ -14,7 +14,11 @@ export function Footer() {
           <a className="text-muted hover:underline" href="https://github.com/VictorCazanave/svg-maps" target="_blank" rel="noreferrer">
             svg-maps/brazil
           </a>{" "}
-          (CC BY 4.0).
+          (CC BY 4.0); malha municipal do IBGE via{" "}
+          <a className="text-muted hover:underline" href="https://github.com/tbrugz/geodata-br" target="_blank" rel="noreferrer">
+            geodata-br
+          </a>
+          .
         </div>
       </div>
     </footer>

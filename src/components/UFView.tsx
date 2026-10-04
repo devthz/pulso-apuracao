@@ -9,6 +9,7 @@ import { corPartido } from "@/lib/parties";
 import type { CargoKey, Corrida } from "@/lib/tse/types";
 import { UF_MAP, UFS } from "@/lib/ufs";
 import { Hemicycle } from "./Hemicycle";
+import { MunicipalMap } from "./MunicipalMap";
 import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, Vazio } from "./ui";
 
 export function UFView({ uf }: { uf: string }) {
@@ -58,7 +59,18 @@ export function UFView({ uf }: { uf: string }) {
         </div>
       </div>
 
-      <div className="mt-10 grid gap-6 xl:grid-cols-2">
+      <Panel className="mt-10 p-6 sm:p-8">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="kicker">Presidente · quem lidera em cada cidade</div>
+            <div className="font-display mt-2 text-2xl font-semibold">Mapa de {info.nome}</div>
+          </div>
+          <div className="font-mono text-[11px] text-dim">duplo clique aproxima · arraste para mover</div>
+        </div>
+        <MunicipalMap uf={uf} className="mx-auto max-w-[900px]" />
+      </Panel>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <RaceCard cargo="governador" uf={uf} titulo="Governador" />
         <RaceCard cargo="senador" uf={uf} titulo="Senado" sub="2 vagas" />
       </div>

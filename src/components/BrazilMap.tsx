@@ -185,6 +185,7 @@ export function BrazilMap({
                     </span>
                     <span className="font-mono tabular-nums">{fmtPct(l.pct)}%</span>
                   </div>
+                  <div className="ml-4 font-mono text-[10px] text-dim">{fmtInt(l.votos)} votos</div>
                   <div className="mt-1 h-1 rounded bg-white/5">
                     <div className="h-full rounded" style={{ width: `${l.pct}%`, background: corPartido(l.partido) }} />
                   </div>

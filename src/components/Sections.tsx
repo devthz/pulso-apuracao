@@ -107,7 +107,9 @@ function CardUF({ u }: { u: ResumoUF }) {
                 <Avatar nome={c!.nome} foto={c!.foto} partido={c!.partido} size={i === 0 ? 44 : 32} />
                 <div className="min-w-0 flex-1">
                   <div className={clsx("truncate", i === 0 ? "text-[15px] font-medium" : "text-[13px]")}>{c!.nome}</div>
-                  <div className="font-mono text-[10.5px] text-dim">{c!.partido}</div>
+                  <div className="font-mono text-[10.5px] text-dim">
+                    {c!.partido} · {fmtInt(c!.votos)} votos
+                  </div>
                 </div>
                 <div className={clsx("font-display tabular-nums", i === 0 ? "text-2xl font-bold" : "text-base")} style={i === 0 ? { color: cor } : undefined}>
                   <Num value={c!.pct} kind="pct" casas={1} />
@@ -159,7 +161,10 @@ export function SenadoSection() {
                       <span className="truncate">{l.nome}</span>
                       <span className="font-mono text-[10px] text-dim">{l.partido}</span>
                       {l.eleito && <span className="text-[10px] text-lime">✓</span>}
-                      <span className="ml-auto font-mono tabular-nums text-muted">{fmtPct(l.pct, 1)}%</span>
+                      <span className="ml-auto text-right font-mono tabular-nums text-muted">
+                        {fmtPct(l.pct, 1)}%
+                        <span className="ml-2 text-[10px] text-dim">{fmtInt(l.votos)}</span>
+                      </span>
                     </div>
                   ))}
                   {!u.lideres.length && <div className="skeleton h-3 w-1/2" />}
