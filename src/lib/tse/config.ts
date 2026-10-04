@@ -28,7 +28,7 @@ export const MODO_DADOS: "tse" | "simulacao" =
 export const INICIO_APURACAO = process.env.APURACAO_INICIO ?? "2026-10-04T17:00:00-03:00";
 
 /** segundos que uma resposta do TSE fica em cache no servidor */
-export const CACHE_TTL_S = Number(process.env.TSE_CACHE_TTL ?? 15);
+export const CACHE_TTL_S = Number(process.env.TSE_CACHE_TTL ?? 4);
 
 export function codigoCargo(cargo: CargoKey, uf: string): number {
   switch (cargo) {

@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import { UFS } from "../ufs";
 import { CACHE_TTL_S, INICIO_APURACAO, MODO_DADOS, urlResultado } from "./config";
 import { corridaSimulada, inicioSimulacao } from "./demo";
@@ -10,12 +11,26 @@ export class AindaNaoPublicado extends Error {}
 
 type Modo = "tse" | "simulacao";
 
-/* ---------- cache em memória + deduplicação de requisições em voo ---------- */
-interface Entrada { em: number; valor: Promise<Corrida> }
-const g = globalThis as unknown as { __pulsoCache?: Map<string, Entrada>; __pulsoFila?: { ativos: number; espera: (() => void)[] } };
-const cache = (g.__pulsoCache ??= new Map());
+/* ---------- cache em memória: stale-while-revalidate + requisições condicionais (ETag) ----------
+ * - Resposta sempre imediata: se o dado está "velho", devolvemos o último bom e atualizamos em segundo plano.
+ * - Revalidação com If-None-Match / If-Modified-Since: quando nada mudou o TSE responde 304 (sem corpo),
+ *   então dá para consultar a cada poucos segundos sem baixar arquivos grandes de novo.
+ * - 404 (ainda não publicado) fica um tempo em cache: muitos 404 seguidos bloqueiam o IP no TSE.
+ */
+interface Entrada {
+  em: number; // última vez que confirmamos o dado com o TSE
+  valor?: Corrida;
+  etag?: string;
+  lastMod?: string;
+  emVoo?: Promise<Corrida>;
+  naoPublicadoAte?: number;
+}
+const g = globalThis as unknown as { __pulsoCache2?: Map<string, Entrada>; __pulsoFila?: { ativos: number; espera: (() => void)[] } };
+const cache = (g.__pulsoCache2 ??= new Map());
 const fila = (g.__pulsoFila ??= { ativos: 0, espera: [] });
-const MAX_PARALELO = 12; // o TSE bloqueia IPs acima de 100 req/s; ficamos bem abaixo
+const MAX_PARALELO = 16; // o TSE bloqueia IPs acima de 100 req/s; ficamos bem abaixo
+const TTL_MS = CACHE_TTL_S * 1000;
+const TTL_404_MS = 10_000;
 
 async function comVaga<T>(fn: () => Promise<T>): Promise<T> {
   if (fila.ativos >= MAX_PARALELO) await new Promise<void>((r) => fila.espera.push(r));
@@ -28,54 +43,78 @@ async function comVaga<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function baixarTSE(cargo: CargoKey, abr: string): Promise<Corrida> {
+async function atualizar(e: Entrada, cargo: CargoKey, abr: string): Promise<Corrida> {
   const url = urlResultado(cargo, abr);
   return comVaga(async () => {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 20_000);
+    const t = setTimeout(() => ctrl.abort(), 15_000);
     try {
-      const res = await fetch(url, {
-        cache: "no-store",
-        signal: ctrl.signal,
-        headers: { "user-agent": "pulso-apuracao/1.0", accept: "application/json" },
-      });
-      if (res.status === 404 || res.status === 403) throw new AindaNaoPublicado(`TSE ainda não publicou ${abr}/${cargo}`);
+      const headers: Record<string, string> = {
+        "user-agent": "pulso-apuracao/1.1",
+        accept: "application/json",
+        "cache-control": "no-cache", // pede à CDN do TSE a versão mais nova
+      };
+      if (e.valor && e.etag) headers["if-none-match"] = e.etag;
+      if (e.valor && e.lastMod) headers["if-modified-since"] = e.lastMod;
+      const res = await fetch(url, { cache: "no-store", signal: ctrl.signal, headers });
+      if (res.status === 304 && e.valor) {
+        e.em = Date.now();
+        return e.valor;
+      }
+      if (res.status === 404) {
+        e.naoPublicadoAte = Date.now() + TTL_404_MS;
+        throw new AindaNaoPublicado(`TSE ainda não publicou ${abr}/${cargo}`);
+      }
       if (!res.ok) throw new Error(`TSE respondeu ${res.status} para ${url}`);
       const raw = (await res.json()) as RawUnificado;
-      return normalizar(raw, cargo, abr);
+      const nova = normalizar(raw, cargo, abr);
+      // nunca regride: se a CDN entregar uma cópia mais antiga, mantém a que já temos
+      if (e.valor && nova.secoes.totalizadas < e.valor.secoes.totalizadas && !nova.final) {
+        e.em = Date.now();
+        return e.valor;
+      }
+      e.valor = nova;
+      e.etag = res.headers.get("etag") ?? undefined;
+      e.lastMod = res.headers.get("last-modified") ?? undefined;
+      e.em = Date.now();
+      e.naoPublicadoAte = undefined;
+      return nova;
     } finally {
       clearTimeout(t);
     }
   });
 }
 
+/** garante que a atualização em segundo plano termine mesmo depois da resposta (serverless) */
+function emSegundoPlano(p: Promise<unknown>) {
+  p.catch(() => {});
+  try {
+    after(() => p.catch(() => {}));
+  } catch {
+    // fora de uma requisição (build/script): só deixa a promise rodar
+  }
+}
+
 export async function getCorrida(cargo: CargoKey, abr: string, modo: Modo = MODO_DADOS): Promise<Corrida> {
   if (modo === "simulacao") return corridaSimulada(cargo, abr);
   const chave = `${cargo}:${abr}`;
+  let e = cache.get(chave);
+  if (!e) cache.set(chave, (e = { em: 0 }));
   const agora = Date.now();
-  const hit = cache.get(chave);
-  // 404 fica menos tempo em cache? Não: ficar batendo em 404 bloqueia o IP no TSE. Mesmo TTL.
-  if (hit && agora - hit.em < CACHE_TTL_S * 1000) return hit.valor;
-  const valor = baixarTSE(cargo, abr);
-  cache.set(chave, { em: agora, valor });
-  valor.catch(() => {
-    // erros de rede saem do cache mais cedo (mas não 404, para não martelar o TSE)
-    setTimeout(() => {
-      const e = cache.get(chave);
-      if (e?.valor === valor) cache.delete(chave);
-    }, 4000);
-  });
-  // stale-while-error: se falhar e havia valor anterior bom, devolve o anterior
-  if (hit) {
-    return valor.catch(async (err) => {
-      try {
-        return await hit.valor;
-      } catch {
-        throw err;
-      }
-    });
+
+  if (!e.valor && e.naoPublicadoAte && e.naoPublicadoAte > agora) throw new AindaNaoPublicado(`TSE ainda não publicou ${abr}/${cargo}`);
+  if (e.valor && agora - e.em < TTL_MS) return e.valor;
+
+  const entrada = e;
+  const voo = (e.emVoo ??= atualizar(entrada, cargo, abr).finally(() => {
+    entrada.emVoo = undefined;
+  }));
+  if (e.valor) {
+    // tem dado: responde na hora e atualiza por trás
+    emSegundoPlano(voo);
+    return e.valor;
   }
-  return valor;
+  return voo;
 }
 
 const brasilia = () =>

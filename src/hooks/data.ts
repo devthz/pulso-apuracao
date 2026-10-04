@@ -2,7 +2,7 @@
 import useSWR from "swr";
 import type { Bancada, CargoKey, Corrida, Panorama } from "@/lib/tse/types";
 
-export const REFRESH_MS = 15_000;
+export const REFRESH_MS = 5_000;
 
 class ApiErro extends Error {
   constructor(public status: number, msg: string) {
@@ -22,17 +22,17 @@ async function fetcher<T>(path: string): Promise<T> {
   return r.json();
 }
 
-const opts = { refreshInterval: REFRESH_MS, keepPreviousData: true, revalidateOnFocus: true, dedupingInterval: 4000 };
+const opts = { refreshInterval: REFRESH_MS, keepPreviousData: true, revalidateOnFocus: true, dedupingInterval: 1500 };
 
 export const useCorrida = (cargo: CargoKey, abr: string | null) =>
   useSWR<Corrida, ApiErro>(abr ? `/api/corrida/${cargo}/${abr}` : null, fetcher, opts);
 
 export const usePanorama = (cargo: "presidente" | "governador" | "senador") =>
-  useSWR<Panorama, ApiErro>(`/api/panorama/${cargo}`, fetcher, opts);
+  useSWR<Panorama, ApiErro>(`/api/panorama/${cargo}`, fetcher, { ...opts, refreshInterval: 6_000 });
 
 export const useBancada = (cargo: "depfed" | "depest" | "senador", uf?: string | null) =>
   useSWR<Bancada, ApiErro>(
     cargo === "depest" && !uf ? null : `/api/bancada/${cargo}${uf ? `?uf=${uf}` : ""}`,
     fetcher,
-    { ...opts, refreshInterval: REFRESH_MS * 2 },
+    { ...opts, refreshInterval: 15_000 },
   );

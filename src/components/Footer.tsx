@@ -10,7 +10,7 @@ export function Footer() {
           <a className="text-muted underline-offset-2 hover:underline" href="https://resultados.tse.jus.br" target="_blank" rel="noreferrer">
             Tribunal Superior Eleitoral
           </a>
-          , atualizados a cada 15 s. Projeções de bancadas são estimativas pelas regras do quociente eleitoral a partir dos votos já apurados — o resultado oficial é o do TSE. Projeto independente, sem vínculo com a Justiça Eleitoral. Mapa:{" "}
+          , atualizados a cada poucos segundos. Projeções de bancadas são estimativas pelas regras do quociente eleitoral a partir dos votos já apurados — o resultado oficial é o do TSE. Projeto independente, sem vínculo com a Justiça Eleitoral. Mapa:{" "}
           <a className="text-muted hover:underline" href="https://github.com/VictorCazanave/svg-maps" target="_blank" rel="noreferrer">
             svg-maps/brazil
           </a>{" "}

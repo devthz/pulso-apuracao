@@ -1,7 +1,7 @@
 "use client";
 import clsx from "clsx";
 import { motion } from "motion/react";
-import { usePanorama } from "@/hooks/data";
+import { useCorrida, usePanorama } from "@/hooks/data";
 import { fmtInt, fmtPct, soHora } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
 import type { Candidato, Corrida, ResumoUF } from "@/lib/tse/types";
@@ -11,7 +11,10 @@ import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, V
 
 export function PresidentSection() {
   const { data, error, isLoading } = usePanorama("presidente");
-  const nac = data?.nacional;
+  // o total nacional vem do endpoint próprio (1 arquivo, atualiza a cada 5 s); usa o mais avançado dos dois
+  const { data: br } = useCorrida("presidente", "br");
+  const pan = data?.nacional;
+  const nac = br && (!pan || br.secoes.totalizadas >= pan.secoes.totalizadas) ? br : pan;
   const semDados = !isLoading && (!nac || nac.status === "aguardando");
 
   return (

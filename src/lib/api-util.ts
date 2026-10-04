@@ -12,8 +12,8 @@ export function json(data: unknown, status = 200) {
   return NextResponse.json(data, {
     status,
     headers: {
-      // CDN (Vercel etc.) segura 10s e serve versão anterior enquanto revalida
-      "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+      // CDN (Vercel etc.) segura 2s e serve a versão anterior por até 5s enquanto revalida
+      "Cache-Control": "public, s-maxage=2, stale-while-revalidate=5",
     },
   });
 }

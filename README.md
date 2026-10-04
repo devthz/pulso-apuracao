@@ -42,12 +42,12 @@ Importe o repositório e pronto. O `vercel.json` fixa a região `gru1` (São Pau
 ## Como os dados fluem
 
 ```
-navegador ──SWR a cada 15s──> /api/*  (Next.js)  ──cache 15s + fila de 12 conexões──> resultados.tse.jus.br
+navegador ──SWR a cada 5s──> /api/*  (Next.js)  ──cache 4s, stale-while-revalidate + ETag (304)──> resultados.tse.jus.br
 ```
 
 - Arquivo usado: resultado unificado do leiaute 2026 (`EA20`, `…/dados/{uf}/{uf}-c{cargo}-e{eleição}-u.json`).
 - Códigos: eleição federal `6257` (presidente) e estadual `6259` (governador, senador, deputados). Cargos `0001`, `0003`, `0005`, `0006`, `0007` (`0008` distrital no DF).
-- O servidor deduplica requisições e guarda cada arquivo por 15 s, então milhares de visitantes geram só algumas requisições ao TSE (que bloqueia IPs acima de 100 req/s e após muitos 404). Respostas da API saem com `s-maxage=10, stale-while-revalidate=30` para a CDN.
+- O servidor deduplica requisições, responde sempre na hora com o último dado e revalida por trás a cada 4 s usando `If-None-Match`/`If-Modified-Since` (o TSE responde 304 quando nada mudou). 404 fica 10 s em cache para não bloquear o IP no TSE. Respostas da API saem com `s-maxage=2, stale-while-revalidate=5`.
 - Se o TSE falhar, o último resultado bom continua no ar.
 - Percentuais calculados sobre votos válidos (`v.vv`), contando só candidaturas com destinação "Válido". A situação vem do texto `st` do TSE (o campo `e="s"` também marca quem vai ao 2º turno).
 - Fotos: `…/{eleição}/fotos/{uf}/{sqcand}.jpeg` (com fallback para iniciais).
