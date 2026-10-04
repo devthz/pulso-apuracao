@@ -1,11 +1,11 @@
 import "server-only";
 import { after } from "next/server";
 import { UFS } from "../ufs";
-import { CACHE_TTL_S, INICIO_APURACAO, MODO_DADOS, urlResultado } from "./config";
+import { CACHE_TTL_S, INICIO_APURACAO, MODO_DADOS, urlFoto, urlResultado } from "./config";
 import { corridaSimulada, inicioSimulacao } from "./demo";
 import { normalizar, type RawUnificado } from "./normalize";
 import { contarPorPartido, eleitosMajoritario, paraEleito, projetarCadeiras, somarAssentos } from "./seats";
-import type { Bancada, CargoKey, Corrida, Panorama, ResumoUF } from "./types";
+import type { Agremiacao, Bancada, Candidato, CargoKey, Corrida, Panorama, ResumoUF } from "./types";
 
 export class AindaNaoPublicado extends Error {}
 
@@ -97,6 +97,13 @@ function emSegundoPlano(p: Promise<unknown>) {
 
 export async function getCorrida(cargo: CargoKey, abr: string, modo: Modo = MODO_DADOS): Promise<Corrida> {
   if (modo === "simulacao") return corridaSimulada(cargo, abr);
+  // O arquivo "br" do TSE é consolidado com bem menos frequência que os das UFs (no 1º turno chegou a ficar
+  // ~50 min atrás). Por isso o total nacional é a SOMA das 27 UFs + exterior, como fazem os outros painéis.
+  if (cargo === "presidente" && abr === "br") return getNacionalPresidente();
+  return getCorridaArquivo(cargo, abr);
+}
+
+async function getCorridaArquivo(cargo: CargoKey, abr: string): Promise<Corrida> {
   const chave = `${cargo}:${abr}`;
   let e = cache.get(chave);
   if (!e) cache.set(chave, (e = { em: 0 }));
@@ -119,6 +126,108 @@ export async function getCorrida(cargo: CargoKey, abr: string, modo: Modo = MODO
 
 const brasilia = () =>
   new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "medium" }).format(new Date());
+
+/* ---------- total nacional = soma das UFs + exterior ---------- */
+const gNac = globalThis as unknown as { __pulsoNac?: { st: number; quando: string } };
+const nac = (gNac.__pulsoNac ??= { st: -1, quando: "" });
+
+async function getNacionalPresidente(): Promise<Corrida> {
+  const abrs = [...UFS.map((u) => u.sigla), "zz"];
+  const [partes, arquivoBR] = await Promise.all([
+    Promise.all(abrs.map((uf) => getCorridaArquivo("presidente", uf).catch(() => null))),
+    getCorridaArquivo("presidente", "br").catch(() => null),
+  ]);
+  const ufs = partes.filter((x): x is Corrida => !!x);
+  if (!ufs.length) {
+    if (arquivoBR) return arquivoBR;
+    throw new AindaNaoPublicado("TSE ainda não publicou o resultado nacional");
+  }
+
+  const soma = (f: (c: Corrida) => number) => ufs.reduce((a, c) => a + f(c), 0);
+  const ts = soma((c) => c.secoes.total);
+  const st = soma((c) => c.secoes.totalizadas);
+
+  // se por algum motivo o arquivo br estiver à frente (ex.: totalização final), usa ele
+  if (arquivoBR && (arquivoBR.final || arquivoBR.secoes.totalizadas >= st)) return arquivoBR;
+
+  const validos = soma((c) => c.votos.validos);
+  const total = soma((c) => c.votos.total);
+  const brancos = soma((c) => c.votos.brancos);
+  const nulos = soma((c) => c.votos.nulos);
+  const eleitorado = soma((c) => c.eleitorado.total);
+  const apurado = soma((c) => c.eleitorado.apurado);
+  const comparecimento = soma((c) => c.eleitorado.comparecimento);
+  const abstencao = soma((c) => c.eleitorado.abstencao);
+
+  // candidatos: soma de votos por número; metadados (vice, situação) do arquivo br quando houver
+  const base = new Map((arquivoBR?.candidatos ?? []).map((c) => [c.numero, c]));
+  const cands = new Map<string, Candidato>();
+  for (const u of ufs)
+    for (const c of u.candidatos) {
+      const x = cands.get(c.numero);
+      if (x) x.votos += c.votos;
+      else {
+        const b = base.get(c.numero);
+        cands.set(c.numero, {
+          ...c,
+          ...(b ? { eleito: b.eleito, segundoTurno: b.segundoTurno, situacao: b.situacao, vice: b.vice ?? c.vice } : {}),
+          foto: urlFoto("presidente", "br", c.id),
+          votos: c.votos,
+        });
+      }
+    }
+  const candidatos = [...cands.values()];
+  for (const c of candidatos) c.pct = validos && c.valido ? (c.votos / validos) * 100 : 0;
+  candidatos.sort((a, b) => b.votos - a.votos || a.nome.localeCompare(b.nome, "pt-BR"));
+
+  const agrs = new Map<string, Agremiacao>();
+  for (const u of ufs)
+    for (const a of u.agremiacoes) {
+      const x = agrs.get(a.id);
+      if (x) {
+        x.votosNominais += a.votosNominais;
+        x.votosLegenda += a.votosLegenda;
+        x.votos += a.votos;
+      } else agrs.set(a.id, { ...a, partidos: [...a.partidos] });
+    }
+
+  // horário: quando o total de seções mudou pela última vez (os "ht" das UFs vêm em fuso local)
+  if (st !== nac.st) {
+    nac.st = st;
+    nac.quando = brasilia().replace(",", "");
+  }
+  const final = ufs.every((c) => c.final) && ufs.length === abrs.length;
+
+  return {
+    cargo: "presidente",
+    abrangencia: "br",
+    vagas: 1,
+    atualizadoEm: nac.quando,
+    final,
+    status: final ? "final" : st > 0 ? "apurando" : "aguardando",
+    secoes: { total: ts, totalizadas: st, pct: ts ? (st / ts) * 100 : 0 },
+    eleitorado: {
+      total: eleitorado,
+      apurado,
+      comparecimento,
+      pctComparecimento: apurado ? (comparecimento / apurado) * 100 : 0,
+      abstencao,
+      pctAbstencao: apurado ? (abstencao / apurado) * 100 : 0,
+    },
+    votos: {
+      total,
+      validos,
+      brancos,
+      nulos,
+      pctBrancos: total ? (brancos / total) * 100 : 0,
+      pctNulos: total ? (nulos / total) * 100 : 0,
+    },
+    candidatos,
+    agremiacoes: [...agrs.values()],
+    totalCandidatos: candidatos.length,
+    fonte: "tse",
+  };
+}
 
 function resumir(c: Corrida, n = 4): ResumoUF {
   return {
