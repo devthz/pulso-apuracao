@@ -36,3 +36,6 @@ export const useBancada = (cargo: "depfed" | "depest" | "senador", uf?: string |
     fetcher,
     { ...opts, refreshInterval: 15_000 },
   );
+
+export const useProjecao = () =>
+  useSWR<import("@/lib/tse/projecao").Projecao, ApiErro>("/api/projecao", fetcher, { ...opts, refreshInterval: 10_000 });

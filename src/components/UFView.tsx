@@ -12,7 +12,7 @@ import { Hemicycle } from "./Hemicycle";
 import { MunicipalMap } from "./MunicipalMap";
 import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, Vazio } from "./ui";
 
-export function UFView({ uf }: { uf: string }) {
+export function UFView({ uf, cidade }: { uf: string; cidade?: string }) {
   const info = UF_MAP[uf];
   const { data: gov } = useCorrida("governador", uf);
   const i = UFS.findIndex((u) => u.sigla === uf);
@@ -65,9 +65,9 @@ export function UFView({ uf }: { uf: string }) {
             <div className="kicker">Presidente · quem lidera em cada cidade</div>
             <div className="font-display mt-2 text-2xl font-semibold">Mapa de {info.nome}</div>
           </div>
-          <div className="font-mono text-[11px] text-dim">duplo clique aproxima · arraste para mover</div>
+          <div className="font-mono text-[11px] text-dim">busque uma cidade · duplo clique aproxima · arraste para mover</div>
         </div>
-        <MunicipalMap uf={uf} className="mx-auto max-w-[900px]" />
+        <MunicipalMap uf={uf} foco={cidade} className="mx-auto max-w-[900px]" />
       </Panel>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">

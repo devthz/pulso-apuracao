@@ -1,14 +1,20 @@
 "use client";
+/**
+ * Mapa por município desenhado em <canvas> (5.500+ formas).
+ * Em SVG cada município vira um nó no DOM e o navegador repinta tudo a cada movimento — fica lento.
+ * Aqui: Path2D pré-montados, um único desenho por atualização de dados/zoom, teste de mouse com caixa
+ * delimitadora + isPointInPath, destaque numa camada separada e arrasto movendo a imagem pronta (CSS transform).
+ */
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { fmtInt, fmtPct } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
 import type { MunicipiosPayload } from "@/lib/tse/municipios";
 import { UF_MAP } from "@/lib/ufs";
 
-interface Geo {
+export interface Geo {
   w: number;
   h: number;
   bbox: Record<string, [number, number, number, number]>;
@@ -16,11 +22,22 @@ interface Geo {
   mun: [string, string, string][]; // [código IBGE, nome, path]
 }
 
-const IBGE_UF: Record<string, string> = {
+interface Forma {
+  i: number;
+  id: string;
+  nome: string;
+  uf: string;
+  p: Path2D;
+  bb: [number, number, number, number];
+}
+
+export const IBGE_UF: Record<string, string> = {
   "11": "ro", "12": "ac", "13": "am", "14": "rr", "15": "pa", "16": "ap", "17": "to", "21": "ma", "22": "pi", "23": "ce",
   "24": "rn", "25": "pb", "26": "pe", "27": "al", "28": "se", "29": "ba", "31": "mg", "32": "es", "33": "rj", "35": "sp",
   "41": "pr", "42": "sc", "43": "rs", "50": "ms", "51": "mt", "52": "go", "53": "df",
 };
+
+export const normalizar = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
 const comModo = (p: string) => {
   if (typeof window === "undefined") return p;
@@ -28,79 +45,248 @@ const comModo = (p: string) => {
   return m ? `${p}?modo=${m}` : p;
 };
 const jf = (u: string) => fetch(comModo(u)).then((r) => r.json());
+export const geoFetcher = (u: string) => fetch(u).then((r) => r.json());
+export const GEO_URL = "/geo/municipios.json";
+const geoOpts = { revalidateOnFocus: false, revalidateIfStale: false, revalidateOnReconnect: false };
 
-/** faixas de vantagem (pontos percentuais sobre o 2º) → opacidade */
 const FAIXAS = [10, 25, 45];
-const opacidade = (margem: number) => (margem < FAIXAS[0] ? 0.42 : margem < FAIXAS[1] ? 0.62 : margem < FAIXAS[2] ? 0.82 : 1);
+const ALFAS = [0.42, 0.62, 0.82, 1];
+const alfa = (margem: number) => (margem < FAIXAS[0] ? ALFAS[0] : margem < FAIXAS[1] ? ALFAS[1] : margem < FAIXAS[2] ? ALFAS[2] : ALFAS[3]);
+const SEM_DADOS = "#141720";
 
-type Linha = (number | string)[];
+function bboxDoPath(d: string): [number, number, number, number] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const re = /(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(d))) {
+    const x = +m[1], y = +m[2];
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  }
+  return [x0, y0, x1, y1];
+}
 
-const Caminhos = memo(function Caminhos({ geo, dados, uf }: { geo: Geo; dados: MunicipiosPayload | undefined; uf?: string }) {
-  return (
-    <>
-      {geo.mun.map(([id, , d], i) => {
-        if (uf && IBGE_UF[id.slice(0, 2)] !== uf) return null;
-        const r = dados?.m[id] as Linha | undefined;
-        let fill = "url(#hatchm)";
-        let op = 1;
-        if (r && r.length >= 4) {
-          const vv = Number(r[1]) || 1;
-          const v1 = Number(r[3]);
-          const v2 = Number(r[5] ?? 0);
-          const partido = dados!.cand[String(r[2])]?.[1];
-          fill = corPartido(partido);
-          op = opacidade(((v1 - v2) / vv) * 100);
-        }
-        return <path key={id} d={d} data-i={i} fill={fill} fillOpacity={op} />;
-      })}
-    </>
-  );
-});
+/** compara pelo conteúdo para não redesenhar quando a API devolve os mesmos números */
+const assinatura = (d?: MunicipiosPayload) =>
+  d ? `${d.carregados}:${Object.values(d.m).reduce((a, r) => a + Number(r[0]) + Number(r[1]), 0)}` : "";
 
-export function MunicipalMap({ uf, className, alturaMax }: { uf?: string; className?: string; alturaMax?: number }) {
+export function MunicipalMap({ uf, foco, className }: { uf?: string; foco?: string; className?: string }) {
   const router = useRouter();
-  const { data: geo } = useSWR<Geo>("/geo/municipios.json", (u: string) => fetch(u).then((r) => r.json()), {
-    revalidateOnFocus: false,
-    revalidateIfStale: false,
-  });
-  const { data } = useSWR<MunicipiosPayload>("/api/municipios", jf, { refreshInterval: 15_000, keepPreviousData: true });
+  const caixa = useRef<HTMLDivElement>(null);
+  const tela = useRef<HTMLCanvasElement>(null);
+  const camada = useRef<HTMLCanvasElement>(null);
+  const [visivel, setVisivel] = useState(false);
+  const [largura, setLargura] = useState(0);
 
-  const [hover, setHover] = useState<number | null>(null);
-  const [pos, setPos] = useState({ x: 0, y: 0, w: 600, h: 600 });
-  const [view, setView] = useState({ k: 1, x: 0, y: 0 });
-  const arrasto = useRef<{ x: number; y: number; vx: number; vy: number; moveu: boolean } | null>(null);
-  const wrap = useRef<HTMLDivElement>(null);
+  // só baixa a geometria quando o mapa chega perto da tela
+  useEffect(() => {
+    const el = caixa.current;
+    if (!el) return;
+    const io = new IntersectionObserver((e) => e.some((x) => x.isIntersecting) && setVisivel(true), { rootMargin: "300px" });
+    io.observe(el);
+    const ro = new ResizeObserver(() => setLargura(el.clientWidth));
+    ro.observe(el);
+    return () => {
+      io.disconnect();
+      ro.disconnect();
+    };
+  }, []);
+
+  const { data: geo } = useSWR<Geo>(visivel ? GEO_URL : null, geoFetcher, geoOpts);
+  const { data } = useSWR<MunicipiosPayload>(visivel ? "/api/municipios" : null, jf, {
+    refreshInterval: 20_000,
+    keepPreviousData: true,
+    compare: (a, b) => assinatura(a) === assinatura(b),
+  });
+
+  const formas = useMemo<Forma[]>(() => {
+    if (!geo) return [];
+    const out: Forma[] = [];
+    geo.mun.forEach(([id, nome, d], i) => {
+      const u = IBGE_UF[id.slice(0, 2)];
+      if (uf && u !== uf) return;
+      out.push({ i, id, nome, uf: u, p: new Path2D(d), bb: bboxDoPath(d) });
+    });
+    return out;
+  }, [geo, uf]);
+  const bordas = useMemo(
+    () => (geo ? Object.entries(geo.ufs).filter(([k]) => !uf || k === uf).map(([, d]) => new Path2D(d)) : []),
+    [geo, uf],
+  );
 
   const vb = useMemo(() => {
     if (!geo) return { x: 0, y: 0, w: 1000, h: 1000 };
     if (uf && geo.bbox[uf]) {
       const [x0, y0, x1, y1] = geo.bbox[uf];
-      const pad = Math.max(x1 - x0, y1 - y0) * 0.06;
+      const pad = Math.max(x1 - x0, y1 - y0) * 0.05;
       return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
     }
     return { x: 0, y: 0, w: geo.w, h: geo.h };
   }, [geo, uf]);
 
+  const altura = largura ? Math.round((largura * vb.h) / vb.w) : 0;
+  const [view, setView] = useState({ k: 1, x: 0, y: 0 });
+  const [hover, setHover] = useState<Forma | null>(null);
+  const [fixo, setFixo] = useState<Forma | null>(null); // cidade escolhida na busca
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const arrasto = useRef<{ x: number; y: number; vx: number; vy: number; dx: number; dy: number; moveu: boolean } | null>(null);
+  const raf = useRef(0);
+  const escala = largura ? largura / (vb.w / view.k) : 1;
+
+  const cores = useMemo(() => {
+    const m = new Map<string, [string, number]>();
+    if (!data) return m;
+    for (const f of formas) {
+      const r = data.m[f.id];
+      if (!r || r.length < 4) continue;
+      const vv = Number(r[1]) || 1;
+      const partido = data.cand[String(r[2])]?.[1];
+      m.set(f.id, [corPartido(partido), alfa(((Number(r[3]) - Number(r[5] ?? 0)) / vv) * 100)]);
+    }
+    return m;
+  }, [data, formas]);
+
+  // desenho principal: só quando dados, zoom ou tamanho mudam
+  useEffect(() => {
+    const c = tela.current;
+    if (!c || !largura || !formas.length) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.round(largura * dpr);
+    c.height = Math.round(altura * dpr);
+    const ctx = c.getContext("2d")!;
+    ctx.clearRect(0, 0, c.width, c.height);
+    const s = escala * dpr;
+    ctx.setTransform(s, 0, 0, s, -(vb.x + view.x) * s, -(vb.y + view.y) * s);
+    const jx0 = vb.x + view.x, jy0 = vb.y + view.y, jx1 = jx0 + vb.w / view.k, jy1 = jy0 + vb.h / view.k;
+    const dentro = (f: Forma) => !(f.bb[2] < jx0 || f.bb[0] > jx1 || f.bb[3] < jy0 || f.bb[1] > jy1);
+    for (const f of formas) {
+      if (!dentro(f)) continue;
+      const cor = cores.get(f.id);
+      ctx.globalAlpha = cor ? cor[1] : 1;
+      ctx.fillStyle = cor ? cor[0] : SEM_DADOS;
+      ctx.fill(f.p);
+    }
+    ctx.globalAlpha = 1;
+    if (uf || view.k >= 2) {
+      ctx.strokeStyle = "rgba(4,5,9,.6)";
+      ctx.lineWidth = 0.5 / escala;
+      for (const f of formas) if (dentro(f)) ctx.stroke(f.p);
+    }
+    ctx.strokeStyle = "rgba(255,255,255,.55)";
+    ctx.lineWidth = 1 / escala;
+    ctx.lineJoin = "round";
+    for (const b of bordas) ctx.stroke(b);
+  }, [formas, bordas, cores, largura, altura, escala, vb, view, uf]);
+
+  // camada de destaque (hover e cidade buscada)
+  useEffect(() => {
+    const c = camada.current;
+    if (!c || !largura) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.round(largura * dpr);
+    c.height = Math.round(altura * dpr);
+    const ctx = c.getContext("2d")!;
+    ctx.clearRect(0, 0, c.width, c.height);
+    const s = escala * dpr;
+    ctx.setTransform(s, 0, 0, s, -(vb.x + view.x) * s, -(vb.y + view.y) * s);
+    ctx.lineJoin = "round";
+    if (fixo) {
+      ctx.strokeStyle = "#d4ff3a";
+      ctx.lineWidth = 2.4 / escala;
+      ctx.shadowColor = "#d4ff3a";
+      ctx.shadowBlur = 14;
+      ctx.stroke(fixo.p);
+    }
+    if (hover && hover !== fixo) {
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2 / escala;
+      ctx.shadowColor = "rgba(255,255,255,.6)";
+      ctx.shadowBlur = 8;
+      ctx.stroke(hover.p);
+    }
+  }, [hover, fixo, largura, altura, escala, vb, view]);
+
+  const teste = useRef<CanvasRenderingContext2D | null>(null);
+  const acharForma = useCallback(
+    (px: number, py: number) => {
+      const mx = vb.x + view.x + px / escala;
+      const my = vb.y + view.y + py / escala;
+      teste.current ??= document.createElement("canvas").getContext("2d");
+      const ctx = teste.current!;
+      for (let j = formas.length - 1; j >= 0; j--) {
+        const f = formas[j];
+        if (mx < f.bb[0] || mx > f.bb[2] || my < f.bb[1] || my > f.bb[3]) continue;
+        if (ctx.isPointInPath(f.p, mx, my)) return f;
+      }
+      return null;
+    },
+    [formas, vb, view, escala],
+  );
+
   const zoom = useCallback(
     (fator: number, cx = 0.5, cy = 0.5) =>
       setView((v) => {
-        const k = Math.min(12, Math.max(1, v.k * fator));
-        // mantém o ponto (cx,cy) da tela fixo
+        const k = Math.min(16, Math.max(1, v.k * fator));
         const px = v.x + (cx * vb.w) / v.k;
         const py = v.y + (cy * vb.h) / v.k;
-        let x = px - (cx * vb.w) / k;
-        let y = py - (cy * vb.h) / k;
-        x = Math.min(Math.max(0, x), vb.w - vb.w / k);
-        y = Math.min(Math.max(0, y), vb.h - vb.h / k);
+        const x = Math.min(Math.max(0, px - (cx * vb.w) / k), vb.w - vb.w / k);
+        const y = Math.min(Math.max(0, py - (cy * vb.h) / k), vb.h - vb.h / k);
         return { k, x, y };
       }),
     [vb],
   );
 
+  /** aproxima e destaca uma cidade */
+  const focar = useCallback(
+    (f: Forma) => {
+      const [x0, y0, x1, y1] = f.bb;
+      const w = Math.max(x1 - x0, (y1 - y0) * (vb.w / vb.h)) * 6; // a cidade ocupa ~1/6 da largura
+      const k = Math.min(16, Math.max(1, vb.w / Math.max(w, 1e-6)));
+      const cx = (x0 + x1) / 2 - vb.x;
+      const cy = (y0 + y1) / 2 - vb.y;
+      setView({
+        k,
+        x: Math.min(Math.max(0, cx - vb.w / k / 2), vb.w - vb.w / k),
+        y: Math.min(Math.max(0, cy - vb.h / k / 2), vb.h - vb.h / k),
+      });
+      setFixo(f);
+      setHover(null);
+    },
+    [vb],
+  );
+
+  // foco vindo da URL (?cidade=código IBGE) — ajusta o estado quando as formas carregam
+  const [focoAplicado, setFocoAplicado] = useState<string | null>(null);
+  if (foco && formas.length && largura && focoAplicado !== foco) {
+    const f = formas.find((x) => x.id === foco);
+    setFocoAplicado(foco);
+    if (f) queueMicrotask(() => focar(f));
+  }
+
+  // busca de cidade
+  const [busca, setBusca] = useState("");
+  const [sel, setSel] = useState(0);
+  const resultados = useMemo(() => {
+    const q = normalizar(busca.trim());
+    if (q.length < 2) return [];
+    const exato: Forma[] = [];
+    const inicio: Forma[] = [];
+    const meio: Forma[] = [];
+    for (const f of formas) {
+      const n = normalizar(f.nome);
+      if (n === q) exato.push(f);
+      else if (n.startsWith(q)) { if (inicio.length < 8) inicio.push(f); }
+      else if (meio.length < 8 && n.includes(q)) meio.push(f);
+    }
+    return [...exato, ...inicio, ...meio].slice(0, 8);
+  }, [busca, formas]);
+
+  const alvo = hover ?? fixo;
   const info = useMemo(() => {
-    if (hover == null || !geo) return null;
-    const [id, nome] = geo.mun[hover];
-    const r = data?.m[id] as Linha | undefined;
+    if (!alvo) return null;
+    const r = data?.m[alvo.id];
     const vv = r ? Number(r[1]) : 0;
     const top: { nome: string; partido: string; votos: number; pct: number }[] = [];
     if (r)
@@ -108,10 +294,14 @@ export function MunicipalMap({ uf, className, alturaMax }: { uf?: string; classN
         const [n, p] = data!.cand[String(r[i])] ?? [String(r[i]), ""];
         top.push({ nome: n, partido: p, votos: Number(r[i + 1]), pct: vv ? (Number(r[i + 1]) / vv) * 100 : 0 });
       }
-    return { id, nome, uf: IBGE_UF[id.slice(0, 2)], pct: r ? Number(r[0]) / 10 : 0, vv, top };
-  }, [hover, geo, data]);
+    return { nome: alvo.nome, uf: alvo.uf, pct: r ? Number(r[0]) / 10 : 0, vv, top };
+  }, [alvo, data]);
 
-  // contagem de municípios por partido líder
+  // posição do balão: mouse (hover) ou canto (cidade fixa)
+  const balao = hover
+    ? { x: Math.max(0, Math.min(pos.x + 16, largura - 270)), y: Math.max(0, Math.min(pos.y + 16, altura - 190)) }
+    : { x: Math.max(0, largura - 276), y: 12 };
+
   const lideres = useMemo(() => {
     const cont = new Map<string, number>();
     if (!data) return [];
@@ -123,14 +313,86 @@ export function MunicipalMap({ uf, className, alturaMax }: { uf?: string; classN
     return [...cont.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
   }, [data, uf]);
 
-  if (!geo) return <div className={clsx("skeleton aspect-square w-full", className)} />;
-
-  const viewBox = `${vb.x + view.x} ${vb.y + view.y} ${vb.w / view.k} ${vb.h / view.k}`;
-  const espessura = (vb.w / 1000) / view.k;
+  const moverCanvas = (dx: number, dy: number) => {
+    const t = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+    if (tela.current) tela.current.style.transform = t;
+    if (camada.current) camada.current.style.transform = t;
+  };
+  const soltar = () => {
+    const a = arrasto.current;
+    arrasto.current = null;
+    if (!a?.moveu) return false;
+    moverCanvas(0, 0);
+    setView((v) => ({
+      ...v,
+      x: Math.min(Math.max(0, a.vx - a.dx / escala), vb.w - vb.w / v.k),
+      y: Math.min(Math.max(0, a.vy - a.dy / escala), vb.h - vb.h / v.k),
+    }));
+    return true;
+  };
 
   return (
     <div className={className}>
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[11px] text-muted">
+      {/* busca de cidade */}
+      <div className="relative mb-3">
+        <div className="flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 focus-within:border-lime/50">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input
+            value={busca}
+            onChange={(e) => {
+              setBusca(e.target.value);
+              setSel(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") setSel((s) => Math.min(resultados.length - 1, s + 1));
+              if (e.key === "ArrowUp") setSel((s) => Math.max(0, s - 1));
+              if (e.key === "Escape") setBusca("");
+              if (e.key === "Enter" && resultados[sel]) {
+                focar(resultados[sel]);
+                setBusca("");
+              }
+            }}
+            placeholder={uf ? `Buscar cidade em ${UF_MAP[uf]?.nome ?? ""}…` : "Buscar cidade…"}
+            className="h-full flex-1 bg-transparent text-[13px] outline-none placeholder:text-dim"
+          />
+          {fixo && (
+            <button
+              onClick={() => {
+                setFixo(null);
+                setView({ k: 1, x: 0, y: 0 });
+              }}
+              className="chip !h-6 border-lime/40 text-lime hover:bg-lime/10"
+            >
+              {fixo.nome} ✕
+            </button>
+          )}
+        </div>
+        {resultados.length > 0 && (
+          <div className="absolute inset-x-0 top-11 z-30 overflow-hidden rounded-xl border border-white/10 bg-[#0b0d14] p-1 shadow-2xl">
+            {resultados.map((f, i) => {
+              const r = data?.m[f.id];
+              const p = r ? data!.cand[String(r[2])]?.[1] : undefined;
+              return (
+                <button
+                  key={f.id}
+                  onMouseEnter={() => setSel(i)}
+                  onClick={() => {
+                    focar(f);
+                    setBusca("");
+                  }}
+                  className={clsx("flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px]", i === sel && "bg-white/[0.06]")}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ background: p ? corPartido(p) : SEM_DADOS }} />
+                  <span className="flex-1 truncate">{f.nome}</span>
+                  <span className="font-mono text-[10px] text-dim">{f.uf.toUpperCase()}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="mb-3 flex min-h-[18px] flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[11px] text-muted">
         {lideres.map(([p, n]) => (
           <span key={p} className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-sm" style={{ background: corPartido(p) }} />
@@ -139,7 +401,7 @@ export function MunicipalMap({ uf, className, alturaMax }: { uf?: string; classN
         ))}
         {lideres.length > 0 && <span className="text-dim">municípios</span>}
         <span className="ml-auto flex items-center gap-1.5 text-dim">
-          {[0.42, 0.62, 0.82, 1].map((o) => (
+          {ALFAS.map((o) => (
             <span key={o} className="h-2 w-3 rounded-sm bg-white" style={{ opacity: o * 0.8 }} />
           ))}
           até {FAIXAS.join(" · ")} · mais pontos
@@ -147,84 +409,76 @@ export function MunicipalMap({ uf, className, alturaMax }: { uf?: string; classN
       </div>
 
       <div
-        ref={wrap}
-        className="relative touch-none select-none overflow-hidden rounded-2xl"
-        style={alturaMax ? { maxHeight: alturaMax } : undefined}
+        ref={caixa}
+        className={clsx(
+          "relative touch-none select-none overflow-hidden rounded-2xl",
+          view.k > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+        )}
+        style={{ height: altura || undefined, aspectRatio: altura ? undefined : `${vb.w} / ${vb.h}` }}
         onDoubleClick={(e) => {
-          const r = wrap.current!.getBoundingClientRect();
+          const r = caixa.current!.getBoundingClientRect();
           zoom(e.shiftKey ? 1 / 2 : 2, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
         }}
         onPointerDown={(e) => {
-          arrasto.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moveu: false };
+          arrasto.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, dx: 0, dy: 0, moveu: false };
         }}
         onPointerMove={(e) => {
-          const r = wrap.current!.getBoundingClientRect();
-          setPos({ x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height });
+          const r = caixa.current!.getBoundingClientRect();
+          const px = e.clientX - r.left;
+          const py = e.clientY - r.top;
           const a = arrasto.current;
           if (a && view.k > 1) {
-            const dx = ((e.clientX - a.x) / r.width) * (vb.w / view.k);
-            const dy = ((e.clientY - a.y) / r.height) * (vb.h / view.k);
-            if (Math.abs(e.clientX - a.x) + Math.abs(e.clientY - a.y) > 4) a.moveu = true;
-            setView((v) => ({
-              ...v,
-              x: Math.min(Math.max(0, a.vx - dx), vb.w - vb.w / v.k),
-              y: Math.min(Math.max(0, a.vy - dy), vb.h - vb.h / v.k),
-            }));
+            a.dx = e.clientX - a.x;
+            a.dy = e.clientY - a.y;
+            if (Math.abs(a.dx) + Math.abs(a.dy) > 4) a.moveu = true;
+            if (a.moveu) {
+              moverCanvas(a.dx, a.dy);
+              setHover(null);
+              return;
+            }
           }
-          const t = e.target as SVGElement;
-          const i = t.getAttribute?.("data-i");
-          setHover(i != null ? Number(i) : null);
+          cancelAnimationFrame(raf.current);
+          raf.current = requestAnimationFrame(() => {
+            setPos({ x: px, y: py });
+            const f = acharForma(px, py);
+            setHover((h) => (h?.i === f?.i ? h : f));
+          });
         }}
         onPointerUp={(e) => {
-          const a = arrasto.current;
-          arrasto.current = null;
-          if (a?.moveu) return;
-          const i = (e.target as SVGElement).getAttribute?.("data-i");
-          if (i != null && !uf && view.k === 1 && e.detail === 1) router.push(`/uf/${IBGE_UF[geo.mun[Number(i)][0].slice(0, 2)]}${window.location.search}`);
+          if (soltar()) return;
+          if (!uf && view.k === 1 && e.detail === 1 && hover) router.push(`/uf/${hover.uf}?cidade=${hover.id}`);
+          else if (hover && e.detail === 1) setFixo(hover);
         }}
         onPointerLeave={() => {
+          cancelAnimationFrame(raf.current);
           setHover(null);
-          arrasto.current = null;
+          soltar();
         }}
       >
-        <svg viewBox={viewBox} className={clsx("h-auto w-full", view.k > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-pointer")}>
-          <defs>
-            <pattern id="hatchm" width={4 * (vb.w / 1000)} height={4 * (vb.w / 1000)} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="100%" height="100%" fill="#0c0e15" />
-              <line x1="0" y1="0" x2="0" y2={4 * (vb.w / 1000)} stroke="rgba(255,255,255,.06)" strokeWidth={1.5 * (vb.w / 1000)} />
-            </pattern>
-          </defs>
-          <g stroke="rgba(4,5,9,.55)" strokeWidth={0.25 * espessura} strokeLinejoin="round">
-            <Caminhos geo={geo} dados={data} uf={uf} />
-          </g>
-          {/* bordas das UFs */}
-          <g fill="none" stroke="rgba(255,255,255,.55)" strokeWidth={0.7 * espessura} pointerEvents="none">
-            {Object.entries(geo.ufs).map(([k, d]) => (!uf || k === uf ? <path key={k} d={d} /> : null))}
-          </g>
-          {hover != null && (
-            <path d={geo.mun[hover][2]} fill="none" stroke="#fff" strokeWidth={1.6 * espessura} pointerEvents="none" />
-          )}
-        </svg>
+        {!geo && <div className="skeleton absolute inset-0" />}
+        <canvas ref={tela} className="absolute inset-0 h-full w-full" />
+        <canvas ref={camada} className="pointer-events-none absolute inset-0 h-full w-full" />
 
-        <div className="absolute bottom-3 left-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b0d14]/80 backdrop-blur">
-          <button aria-label="Aproximar" onClick={() => zoom(1.6)} className="h-8 w-8 text-lg text-muted hover:bg-white/5 hover:text-text">+</button>
-          <button aria-label="Afastar" onClick={() => zoom(1 / 1.6)} className="h-8 w-8 border-t border-white/10 text-lg text-muted hover:bg-white/5 hover:text-text">−</button>
+        <div className="absolute bottom-3 left-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0b0d14]/90">
+          <button aria-label="Aproximar" onClick={() => zoom(1.8)} className="h-8 w-8 text-lg text-muted hover:bg-white/5 hover:text-text">+</button>
+          <button aria-label="Afastar" onClick={() => zoom(1 / 1.8)} className="h-8 w-8 border-t border-white/10 text-lg text-muted hover:bg-white/5 hover:text-text">−</button>
           {view.k > 1 && (
             <button aria-label="Ver tudo" onClick={() => setView({ k: 1, x: 0, y: 0 })} className="h-8 w-8 border-t border-white/10 text-[11px] text-muted hover:bg-white/5 hover:text-text">⤢</button>
           )}
         </div>
         {data && data.carregados < data.total && (
-          <div className="absolute bottom-3 right-3 rounded-full border border-white/10 bg-[#0b0d14]/80 px-3 py-1 font-mono text-[10px] text-muted backdrop-blur">
+          <div className="absolute bottom-3 right-3 rounded-full border border-white/10 bg-[#0b0d14]/90 px-3 py-1 font-mono text-[10px] text-muted">
             carregando municípios {fmtInt(data.carregados)}/{fmtInt(data.total)}
           </div>
         )}
 
         {info && (
           <div
-            className="pointer-events-none absolute left-0 top-0 z-20 w-64 rounded-2xl border border-white/10 bg-[#0b0d14]/95 p-4 shadow-2xl backdrop-blur-xl"
-            style={{
-              transform: `translate(${Math.max(0, Math.min(pos.x + 16, pos.w - 270))}px, ${Math.max(0, Math.min(pos.y + 16, pos.h - 190))}px)`,
-            }}
+            className={clsx(
+              "pointer-events-none absolute left-0 top-0 z-20 w-64 rounded-2xl border bg-[#0b0d14]/95 p-4 shadow-2xl",
+              !hover ? "border-lime/30" : "border-white/10",
+            )}
+            style={{ transform: `translate(${balao.x}px, ${balao.y}px)` }}
           >
             <div className="flex items-baseline justify-between gap-2">
               <div className="truncate font-display text-[15px] font-semibold">{info.nome}</div>
@@ -249,7 +503,7 @@ export function MunicipalMap({ uf, className, alturaMax }: { uf?: string; classN
                 </div>
               ))}
             </div>
-            {!uf && info.uf && <div className="mt-3 border-t border-white/5 pt-2 font-mono text-[10px] text-dim">clique para abrir {UF_MAP[info.uf]?.nome}</div>}
+            {!uf && hover && <div className="mt-3 border-t border-white/5 pt-2 font-mono text-[10px] text-dim">clique para abrir {UF_MAP[hover.uf]?.nome}</div>}
           </div>
         )}
       </div>

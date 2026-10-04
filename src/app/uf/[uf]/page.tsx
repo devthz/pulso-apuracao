@@ -13,8 +13,9 @@ export async function generateMetadata({ params }: PageProps<"/uf/[uf]">): Promi
   return { title: info ? `${info.nome} · PULSO Eleições 2026` : "PULSO" };
 }
 
-export default async function Page({ params }: PageProps<"/uf/[uf]">) {
+export default async function Page({ params, searchParams }: PageProps<"/uf/[uf]">) {
   const { uf } = await params;
   if (!UF_MAP[uf]) notFound();
-  return <UFView uf={uf} />;
+  const cidade = (await searchParams).cidade;
+  return <UFView uf={uf} cidade={typeof cidade === "string" ? cidade : undefined} />;
 }

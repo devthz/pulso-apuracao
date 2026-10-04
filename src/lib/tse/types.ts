@@ -82,6 +82,8 @@ export interface ResumoUF {
   validos: number;
   atualizadoEm: string | null;
   erro?: string;
+  /** modelo de probabilidade (governador): chance do líder vencer no 1º turno etc. */
+  proj?: { numero: string; pMaioria: number; pPrimeiro: number; proj: number; p05: number; p95: number; pSegundoTurno: number };
 }
 
 export interface Panorama {

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useSWRConfig } from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { usePanorama } from "@/hooks/data";
 import { fmtPct } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
@@ -166,7 +166,7 @@ export function Header() {
               className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[13px] text-muted transition hover:border-white/20 hover:text-text"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-              <span className="hidden 2xl:inline">Buscar estado</span>
+              <span className="hidden 2xl:inline">Buscar estado ou cidade</span>
               <kbd className="hidden rounded border border-white/10 px-1.5 font-mono text-[10px] sm:inline">⌘K</kbd>
             </button>
           </div>
@@ -178,31 +178,66 @@ export function Header() {
   );
 }
 
+const IBGE_UF_CMD: Record<string, string> = {
+  "11": "ro", "12": "ac", "13": "am", "14": "rr", "15": "pa", "16": "ap", "17": "to", "21": "ma", "22": "pi", "23": "ce",
+  "24": "rn", "25": "pb", "26": "pe", "27": "al", "28": "se", "29": "ba", "31": "mg", "32": "es", "33": "rj", "35": "sp",
+  "41": "pr", "42": "sc", "43": "rs", "50": "ms", "51": "mt", "52": "go", "53": "df",
+};
+type ItemBusca = { tipo: "uf"; uf: string; nome: string; extra: string } | { tipo: "cidade"; uf: string; id: string; nome: string; extra: string };
+
 function CommandPalette({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
+  // índice leve de cidades (~50 KB), só baixado quando a busca abre
+  const { data: cidades } = useSWR<[string, string][]>("/geo/cidades.json", (u: string) => fetch(u).then((r) => r.json()), {
+    revalidateOnFocus: false,
+    revalidateIfStale: false,
+  });
   const norm = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
-  const lista = useMemo(
-    () => UFS.filter((u) => !q || norm(u.nome).includes(norm(q)) || u.sigla.includes(norm(q))),
-    [q],
-  );
+  const indice = useMemo(() => (cidades ?? []).map(([id, n]) => [id, n, norm(n)] as const), [cidades]);
+  const lista = useMemo<ItemBusca[]>(() => {
+    const t = norm(q.trim());
+    const ufs: ItemBusca[] = UFS.filter((u) => !t || norm(u.nome).includes(t) || u.sigla === t).map((u) => ({
+      tipo: "uf",
+      uf: u.sigla,
+      nome: u.nome,
+      extra: u.regiao,
+    }));
+    if (t.length < 2) return ufs;
+    const exato: ItemBusca[] = [];
+    const comeca: ItemBusca[] = [];
+    const contem: ItemBusca[] = [];
+    for (const [id, nome, n] of indice) {
+      const uf = IBGE_UF_CMD[id.slice(0, 2)];
+      const item: ItemBusca = { tipo: "cidade", uf, id, nome, extra: uf.toUpperCase() };
+      if (n === t) exato.push(item);
+      else if (n.startsWith(t)) { if (comeca.length < 12) comeca.push(item); }
+      else if (contem.length < 12 && n.includes(t)) contem.push(item);
+    }
+    return [...exato, ...ufs.slice(0, 3), ...comeca, ...contem].slice(0, 14);
+  }, [q, indice]);
   useEffect(() => input.current?.focus(), []);
-  const ir = (uf: string) => {
+  const ir = (it: ItemBusca) => {
     onClose();
-    router.push(`/uf/${uf}${window.location.search}`);
+    const modo = new URLSearchParams(window.location.search).get("modo");
+    const qs = new URLSearchParams();
+    if (it.tipo === "cidade") qs.set("cidade", it.id);
+    if (modo) qs.set("modo", modo);
+    const s = qs.toString();
+    router.push(`/uf/${it.uf}${s ? `?${s}` : ""}`);
   };
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-4 pt-[12vh] backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[12vh]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClose}
     >
       <motion.div
-        className="panel w-full max-w-lg overflow-hidden !rounded-3xl !bg-[#0b0d14]/95"
+        className="panel w-full max-w-lg overflow-hidden !rounded-3xl !bg-[#0b0d14]"
         initial={{ y: 20, scale: 0.97 }}
         animate={{ y: 0, scale: 1 }}
         exit={{ y: 10, scale: 0.98 }}
@@ -222,27 +257,34 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
               if (e.key === "Escape") onClose();
               if (e.key === "ArrowDown") setSel((s) => Math.min(lista.length - 1, s + 1));
               if (e.key === "ArrowUp") setSel((s) => Math.max(0, s - 1));
-              if (e.key === "Enter" && lista[sel]) ir(lista[sel].sigla);
+              if (e.key === "Enter" && lista[sel]) ir(lista[sel]);
             }}
-            placeholder="Digite um estado…"
+            placeholder="Estado ou cidade…"
             className="h-14 flex-1 bg-transparent text-[15px] outline-none placeholder:text-dim"
           />
           <kbd className="rounded border border-white/10 px-1.5 font-mono text-[10px] text-dim">ESC</kbd>
         </div>
         <div className="max-h-[50vh] overflow-y-auto p-2">
-          {lista.map((u, i) => (
+          {lista.map((it, i) => (
             <button
-              key={u.sigla}
+              key={it.tipo === "uf" ? it.uf : it.id}
               onMouseEnter={() => setSel(i)}
-              onClick={() => ir(u.sigla)}
+              onClick={() => ir(it)}
               className={clsx("flex w-full items-center gap-4 rounded-xl px-3 py-2.5 text-left transition", i === sel && "bg-white/[0.06]")}
             >
-              <span className="font-display w-9 text-sm font-semibold text-lime">{u.sigla.toUpperCase()}</span>
-              <span className="flex-1 text-sm">{u.nome}</span>
-              <span className="font-mono text-[11px] text-dim">{u.regiao}</span>
+              {it.tipo === "uf" ? (
+                <span className="font-display w-9 text-sm font-semibold text-lime">{it.uf.toUpperCase()}</span>
+              ) : (
+                <span className="flex w-9 justify-center text-muted">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21Z" /><circle cx="12" cy="9.5" r="2.5" /></svg>
+                </span>
+              )}
+              <span className="flex-1 text-sm">{it.nome}</span>
+              <span className="font-mono text-[11px] text-dim">{it.extra}</span>
             </button>
           ))}
           {!lista.length && <div className="px-3 py-6 text-center text-sm text-muted">Nada encontrado</div>}
+          {q.trim().length >= 2 && !cidades && <div className="px-3 py-3 text-center font-mono text-[11px] text-dim">carregando cidades…</div>}
         </div>
       </motion.div>
     </motion.div>

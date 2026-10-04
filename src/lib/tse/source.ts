@@ -4,6 +4,7 @@ import { UFS } from "../ufs";
 import { CACHE_TTL_S, INICIO_APURACAO, MODO_DADOS, urlFoto, urlResultado } from "./config";
 import { corridaSimulada, inicioSimulacao } from "./demo";
 import { normalizar, type RawUnificado } from "./normalize";
+import { projetar, type Projecao } from "./projecao";
 import { contarPorPartido, eleitosMajoritario, paraEleito, projetarCadeiras, somarAssentos } from "./seats";
 import type { Agremiacao, Bancada, Candidato, CargoKey, Corrida, Panorama, ResumoUF } from "./types";
 
@@ -255,7 +256,15 @@ export async function getPanorama(cargo: Exclude<CargoKey, "depfed" | "depest">,
   const ufs = await Promise.all(
     UFS.map(async (u) => {
       try {
-        return resumir(await getCorrida(cargo, u.sigla, modo));
+        const c = await getCorrida(cargo, u.sigla, modo);
+        const r = resumir(c);
+        if (cargo === "governador" && c.status !== "aguardando") {
+          const p = projetarMemo(`gov:${u.sigla}:${modo}`, [c], u.sigla, 2000);
+          const l = p?.candidatos[0];
+          if (p && l)
+            r.proj = { numero: l.numero, pMaioria: l.pMaioria, pPrimeiro: l.pPrimeiro, proj: l.proj, p05: l.p05, p95: l.p95, pSegundoTurno: p.pSegundoTurno };
+        }
+        return r;
       } catch (e) {
         return resumoVazio(u.sigla, e instanceof AindaNaoPublicado ? "aguardando" : "erro");
       }
@@ -271,6 +280,30 @@ export async function getPanorama(cargo: Exclude<CargoKey, "depfed" | "depest">,
   }
   const inicioApuracao = modo === "simulacao" ? inicioSimulacao() : new Date(INICIO_APURACAO).toISOString();
   return { cargo, fonte: modo, geradoEm: brasilia(), inicioApuracao, nacional, ufs };
+}
+
+/* ---------- projeção / probabilidade ---------- */
+const gProj = globalThis as unknown as { __pulsoProj?: Map<string, { chave: string; valor: Projecao | null }> };
+const memoProj = (gProj.__pulsoProj ??= new Map());
+function projetarMemo(id: string, partes: Corrida[], abr: string, sims = 3000) {
+  // só recalcula quando os dados mudam
+  const chave = partes.map((p) => `${p.abrangencia}${p.secoes.totalizadas}:${p.votos.validos}`).join("|");
+  const m = memoProj.get(id);
+  if (m && m.chave === chave) return m.valor;
+  const valor = projetar(partes, abr, sims);
+  memoProj.set(id, { chave, valor });
+  return valor;
+}
+
+export async function getProjecaoPresidente(modo: Modo = MODO_DADOS): Promise<Projecao | null> {
+  const abrs = [...UFS.map((u) => u.sigla), ...(modo === "tse" ? ["zz"] : [])];
+  const partes = (
+    await Promise.all(
+      abrs.map((uf) => (modo === "simulacao" ? Promise.resolve(corridaSimulada("presidente", uf)) : getCorridaArquivo("presidente", uf)).catch(() => null)),
+    )
+  ).filter((x): x is Corrida => !!x && x.status !== "aguardando");
+  if (!partes.length) return null;
+  return projetarMemo(`pres:${modo}`, partes, "br", 4000);
 }
 
 /** Bancadas eleitas/projetadas. depfed sem UF = Câmara inteira; senador = 2 vagas por UF. */

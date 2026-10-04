@@ -64,6 +64,28 @@ export function GovernadoresSection() {
   );
 }
 
+function ChanceGov({ u }: { u: ResumoUF }) {
+  const p = u.proj!;
+  const lider = u.lideres.find((l) => l.numero === p.numero) ?? u.lideres[0];
+  const vence = p.pMaioria >= 0.5;
+  const valor = vence ? p.pMaioria : p.pSegundoTurno;
+  const txt = valor >= 0.995 ? ">99" : valor <= 0.005 ? "<1" : String(Math.round(valor * 100));
+  return (
+    <div className="mt-4 border-t border-white/[0.06] pt-3">
+      <div className="flex items-center justify-between font-mono text-[10.5px]">
+        <span className="text-dim">
+          {vence ? `${lider?.nome.split(" ")[0] ?? "Líder"} vence no 1º turno` : "Vai para o 2º turno"}
+        </span>
+        <span className={vence ? "text-lime" : "text-cyan"}>{txt}%</span>
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+        <div className={clsx("h-full rounded-full", vence ? "bg-lime" : "bg-cyan")} style={{ width: `${valor * 100}%` }} />
+      </div>
+      <div className="mt-1 font-mono text-[9.5px] text-dim">projeção do líder: {fmtPct(p.proj, 1)}% · modelo PULSO</div>
+    </div>
+  );
+}
+
 function Contador({ n, label, cor }: { n: number; label: string; cor: string }) {
   return (
     <div className="text-right">
@@ -124,6 +146,7 @@ function CardUF({ u }: { u: ResumoUF }) {
             <div className="skeleton h-3 w-1/3" />
           </div>
         )}
+        {u.proj && !u.final && a && <ChanceGov u={u} />}
       </Panel>
     </Link>
   );

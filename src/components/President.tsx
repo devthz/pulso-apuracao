@@ -8,6 +8,7 @@ import { corPartido } from "@/lib/parties";
 import type { Candidato, Corrida, ResumoUF } from "@/lib/tse/types";
 import { BrazilMap } from "./BrazilMap";
 import { MunicipalMap } from "./MunicipalMap";
+import { ProjecaoPanel } from "./Projecao";
 import { Cronometro, hms, useFaseApuracao } from "./chrome";
 import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, Vazio } from "./ui";
 
@@ -69,6 +70,7 @@ export function PresidentSection() {
         </Panel>
       </div>
       {nac && nac.status !== "aguardando" && <StatsStrip corrida={nac} />}
+      {nac && nac.status !== "aguardando" && <ProjecaoPanel candidatos={nac.candidatos} />}
     </section>
   );
 }
