@@ -1,6 +1,7 @@
 import "server-only";
 import { after } from "next/server";
 import IDS from "@/data/municipios-ids.json";
+import { kvAtivo, kvDel, kvGet, kvSet, kvTrava } from "../kv";
 import { UFS } from "../ufs";
 import { TSE } from "./config";
 import { corridaSimulada } from "./demo";
@@ -146,24 +147,106 @@ async function lerMunicipio(m: Mun) {
 
 const ORCAMENTO_MS = 45_000;
 
+/* ---------- persistência compartilhada (Redis) ----------
+ * Na Vercel o servidor roda em várias instâncias, e cada uma nasce com a memória vazia.
+ * Com Redis: uma instância por vez (trava) sincroniza com o TSE e grava um retrato completo;
+ * as outras só leem esse retrato — então qualquer instância responde com o mapa inteiro na hora.
+ */
+const CHAVE = () => `pulso:mun:${TSE.ciclo}:${ele()}:v1`;
+const CHAVE_TRAVA = () => `${CHAVE()}:trava`;
+const DONO = Math.random().toString(36).slice(2);
+interface Retrato {
+  versao: number;
+  cand: Record<string, [string, string]>;
+  muns: (string | number)[][]; // [cd, cdi, uf, st, ts, stAb, vv, n1, v1, n2, v2, n3, v3]
+}
+const gk = globalThis as unknown as { __pulsoMunKV?: { versao: number; lidoEm: number; lendo?: Promise<void>; salvoEm: number } };
+const K = (gk.__pulsoMunKV ??= { versao: 0, lidoEm: 0, salvoEm: 0 });
+
+function aplicarRetrato(r: Retrato) {
+  if (r.versao <= K.versao) return;
+  for (const [cd, cdi, uf, st, ts, stAb, vv, ...top] of r.muns) {
+    const atual = S.muns.get(String(cd));
+    // não regride: mantém o que esta instância tiver de mais novo
+    if (atual?.lido && atual.st > Number(st)) continue;
+    const t: [string, number][] = [];
+    for (let i = 0; i + 1 < top.length; i += 2) t.push([String(top[i]), Number(top[i + 1])]);
+    S.muns.set(String(cd), {
+      cd: String(cd),
+      cdi: String(cdi),
+      uf: String(uf),
+      st: Number(st),
+      ts: Number(ts),
+      stAb: Math.max(Number(stAb), atual?.stAb ?? 0),
+      vv: Number(vv),
+      top: t,
+      lido: true,
+    });
+  }
+  Object.assign(S.cand, r.cand);
+  K.versao = r.versao;
+}
+
+/** lê o retrato do Redis (no máximo a cada 5 s por instância) */
+async function hidratar() {
+  if (!kvAtivo) return;
+  if (Date.now() - K.lidoEm < 5_000) return;
+  K.lendo ??= (async () => {
+    try {
+      const txt = await kvGet(CHAVE());
+      if (txt) aplicarRetrato(JSON.parse(txt) as Retrato);
+    } catch {
+      /* retrato corrompido: ignora */
+    } finally {
+      K.lidoEm = Date.now();
+      K.lendo = undefined;
+    }
+  })();
+  await K.lendo;
+}
+
+async function salvar() {
+  if (!kvAtivo) return;
+  const muns = [...S.muns.values()].filter((m) => m.lido).map((m) => [m.cd, m.cdi, m.uf, m.st, m.ts, m.stAb, m.vv, ...m.top.flat()]);
+  const r: Retrato = { versao: Date.now(), cand: S.cand, muns };
+  await kvSet(CHAVE(), JSON.stringify(r), 60 * 60 * 24 * 7);
+  K.versao = r.versao;
+  K.salvoEm = Date.now();
+}
+
 async function rodada() {
   const inicio = Date.now();
-  await garantirConfig();
-  if (!S.muns.size) return;
-  // acompanhamento das 27 UFs (pequeno; com ETag quase sempre volta 304)
-  await Promise.all(UFS.map((u) => lerAcompanhamento(u.sigla)));
-  // municípios que mudaram (ou nunca lidos com votos), os que nunca foram lidos primeiro
-  const fila = [...S.muns.values()]
-    .filter((m) => m.stAb > 0 && m.stAb !== m.st)
-    .sort((a, b) => Number(a.lido) - Number(b.lido) || b.stAb - b.st - (a.stAb - a.st));
-  let i = 0;
-  const trabalhadores = Array.from({ length: MAX_SIMULT }, async () => {
-    while (i < fila.length && Date.now() - inicio < ORCAMENTO_MS) {
-      const m = fila[i++];
-      await lerMunicipio(m);
-    }
-  });
-  await Promise.all(trabalhadores);
+  await hidratar();
+  // com Redis, só uma instância sincroniza por vez
+  if (kvAtivo && !(await kvTrava(CHAVE_TRAVA(), DONO, 58))) return;
+  try {
+    await garantirConfig();
+    if (!S.muns.size) return;
+    // acompanhamento das 27 UFs (pequeno; com ETag quase sempre volta 304)
+    await Promise.all(UFS.map((u) => lerAcompanhamento(u.sigla)));
+    // municípios que mudaram (ou nunca lidos com votos), os que nunca foram lidos primeiro
+    const fila = [...S.muns.values()]
+      .filter((m) => m.stAb > 0 && m.stAb !== m.st)
+      .sort((a, b) => Number(a.lido) - Number(b.lido) || b.stAb - b.st - (a.stAb - a.st));
+    let i = 0;
+    let lidosDesdeSalvar = 0;
+    const trabalhadores = Array.from({ length: MAX_SIMULT }, async () => {
+      while (i < fila.length && Date.now() - inicio < ORCAMENTO_MS) {
+        const m = fila[i++];
+        await lerMunicipio(m);
+        lidosDesdeSalvar++;
+        // na carga inicial (muitos municípios), grava retratos parciais a cada ~15 s
+        if (lidosDesdeSalvar > 200 && Date.now() - K.salvoEm > 15_000) {
+          lidosDesdeSalvar = 0;
+          await salvar();
+        }
+      }
+    });
+    await Promise.all(trabalhadores);
+    if (fila.length) await salvar();
+  } finally {
+    if (kvAtivo) await kvDel(CHAVE_TRAVA());
+  }
 }
 
 function garantirSincronizacao() {
@@ -191,9 +274,11 @@ const brasilia = () =>
 
 export async function getMunicipios(modo: "tse" | "simulacao"): Promise<MunicipiosPayload> {
   if (modo === "simulacao") return municipiosSimulados();
+  // instância nova: pega o retrato compartilhado antes de responder (rápido, ~50 ms)
+  await Promise.race([hidratar(), espera(1500)]);
   garantirSincronizacao();
-  // primeira chamada em servidor frio: espera um pouco para já devolver algo
-  if (!S.muns.size && S.rodando) await Promise.race([S.rodando, espera(6000)]);
+  // nada carregado ainda (primeira vez de todas): espera um pouco a sincronização para já devolver algo
+  if (S.rodando && ![...S.muns.values()].some((x) => x.lido)) await Promise.race([S.rodando, espera(6000)]);
   const m: MunicipiosPayload["m"] = {};
   let carregados = 0;
   for (const x of S.muns.values()) {
@@ -201,7 +286,8 @@ export async function getMunicipios(modo: "tse" | "simulacao"): Promise<Municipi
     carregados++;
     m[x.cdi] = [x.ts ? Math.round((x.st / x.ts) * 1000) : 0, x.vv, ...x.top.flat()];
   }
-  return { fonte: "tse", geradoEm: brasilia(), carregados, total: S.muns.size, cand: S.cand, m };
+  const total = Math.max(S.muns.size, 5570);
+  return { fonte: "tse", geradoEm: brasilia(), carregados, total, cand: S.cand, m };
 }
 
 /* ---------- simulação: deriva cada município do resultado simulado da UF, com variação local ---------- */

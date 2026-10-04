@@ -63,6 +63,10 @@ Arquivos principais:
 | `src/lib/tse/demo.ts` | gerador da apuração simulada |
 | `src/lib/parties.ts` | cores dos partidos |
 
+### Mapa por município + Redis
+
+O resultado por município exige ~5.570 arquivos do TSE. O servidor lê o acompanhamento de cada UF e só baixa de novo as cidades que avançaram. Para todas as instâncias da Vercel compartilharem esse trabalho, conecte um **Upstash for Redis** (Vercel → Storage → Create Database → Upstash → conectar ao projeto). As variáveis `KV_REST_API_URL`/`KV_REST_API_TOKEN` são criadas sozinhas; uma instância por vez sincroniza (trava no Redis) e as demais leem o retrato pronto.
+
 ### Testar no ambiente de simulado do TSE
 
 ```bash

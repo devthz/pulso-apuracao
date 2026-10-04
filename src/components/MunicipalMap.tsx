@@ -44,7 +44,34 @@ const comModo = (p: string) => {
   const m = new URLSearchParams(window.location.search).get("modo");
   return m ? `${p}?modo=${m}` : p;
 };
-const jf = (u: string) => fetch(comModo(u)).then((r) => r.json());
+/**
+ * Acumula os resultados no navegador: se uma resposta vier de um servidor "frio" (com menos municípios),
+ * o mapa não volta para trás — cada município só é trocado por uma leitura igual ou mais avançada.
+ * O acumulado vive no módulo, então sobrevive à navegação entre páginas.
+ */
+let acumulado: MunicipiosPayload | null = null;
+async function buscarMunicipios(u: string): Promise<MunicipiosPayload> {
+  const novo = (await fetch(comModo(u)).then((r) => r.json())) as MunicipiosPayload;
+  if (!acumulado || acumulado.fonte !== novo.fonte) return (acumulado = novo);
+  const m = { ...acumulado.m };
+  let mudou = false;
+  for (const [id, r] of Object.entries(novo.m)) {
+    const velho = m[id];
+    if (!velho || Number(r[0]) >= Number(velho[0])) {
+      if (!velho || velho.join() !== r.join()) mudou = true;
+      m[id] = r;
+    }
+  }
+  if (!mudou) return acumulado;
+  acumulado = {
+    ...novo,
+    cand: { ...acumulado.cand, ...novo.cand },
+    m,
+    carregados: Object.keys(m).length,
+    total: Math.max(novo.total, acumulado.total),
+  };
+  return acumulado;
+}
 export const geoFetcher = (u: string) => fetch(u).then((r) => r.json());
 export const GEO_URL = "/geo/municipios.json";
 const geoOpts = { revalidateOnFocus: false, revalidateIfStale: false, revalidateOnReconnect: false };
@@ -67,6 +94,9 @@ function bboxDoPath(d: string): [number, number, number, number] {
   }
   return [x0, y0, x1, y1];
 }
+
+/** formas já montadas (Path2D) ficam guardadas entre páginas */
+const cacheFormas = new WeakMap<Geo, Map<string, Forma[]>>();
 
 /** compara pelo conteúdo para não redesenhar quando a API devolve os mesmos números */
 const assinatura = (d?: MunicipiosPayload) =>
@@ -95,20 +125,26 @@ export function MunicipalMap({ uf, foco, className }: { uf?: string; foco?: stri
   }, []);
 
   const { data: geo } = useSWR<Geo>(visivel ? GEO_URL : null, geoFetcher, geoOpts);
-  const { data } = useSWR<MunicipiosPayload>(visivel ? "/api/municipios" : null, jf, {
+  const { data } = useSWR<MunicipiosPayload>(visivel ? "/api/municipios" : null, buscarMunicipios, {
     refreshInterval: 20_000,
     keepPreviousData: true,
-    compare: (a, b) => assinatura(a) === assinatura(b),
+    fallbackData: acumulado ?? undefined,
+    compare: (a, b) => a === b || assinatura(a) === assinatura(b),
   });
 
   const formas = useMemo<Forma[]>(() => {
     if (!geo) return [];
+    const chave = uf ?? "br";
+    const cache = cacheFormas.get(geo);
+    if (cache?.has(chave)) return cache.get(chave)!;
     const out: Forma[] = [];
     geo.mun.forEach(([id, nome, d], i) => {
       const u = IBGE_UF[id.slice(0, 2)];
       if (uf && u !== uf) return;
       out.push({ i, id, nome, uf: u, p: new Path2D(d), bb: bboxDoPath(d) });
     });
+    if (!cacheFormas.has(geo)) cacheFormas.set(geo, new Map());
+    cacheFormas.get(geo)!.set(chave, out);
     return out;
   }, [geo, uf]);
   const bordas = useMemo(
