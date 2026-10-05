@@ -40,8 +40,8 @@ function Medidor({ valor, rotulo, cor }: { valor: number; rotulo: string; cor: s
   );
 }
 
-export function ProjecaoPanel({ candidatos }: { candidatos: Candidato[] }) {
-  const { data: p } = useProjecao();
+export function ProjecaoPanel({ candidatos, turno = 1 }: { candidatos: Candidato[]; turno?: 1 | 2 }) {
+  const { data: p } = useProjecao(turno);
   if (!p || p.pctApurado <= 0) return null;
   const lista = p.candidatos.slice(0, 4);
   const max = Math.max(55, Math.ceil(Math.max(...lista.map((c) => c.p95)) / 5) * 5 + 5);
@@ -74,21 +74,29 @@ export function ProjecaoPanel({ candidatos }: { candidatos: Candidato[] }) {
 
       <div className="mt-10 grid gap-10 lg:grid-cols-12">
         <div className="flex flex-wrap items-start justify-center gap-8 lg:col-span-4 lg:flex-col lg:items-center">
-          <Medidor valor={p.pSegundoTurno} rotulo="chance de haver 2º turno" cor="#3df2ff" />
-          {lider && (
-            <Medidor
-              valor={lider.pMaioria}
-              rotulo={`chance de ${lider.nome.split(" ")[0]} vencer no 1º turno`}
-              cor={corPartido(lider.partido)}
-            />
+          {turno === 2 ? (
+            lista.slice(0, 2).map((c) => (
+              <Medidor key={c.numero} valor={c.pPrimeiro} rotulo={`chance de ${c.nome.split(" ")[0]} vencer`} cor={corPartido(c.partido)} />
+            ))
+          ) : (
+            <>
+              <Medidor valor={p.pSegundoTurno} rotulo="chance de haver 2º turno" cor="#3df2ff" />
+              {lider && (
+                <Medidor
+                  valor={lider.pMaioria}
+                  rotulo={`chance de ${lider.nome.split(" ")[0]} vencer no 1º turno`}
+                  cor={corPartido(lider.partido)}
+                />
+              )}
+            </>
           )}
         </div>
 
         <div className="lg:col-span-8">
           <div className="mb-3 grid grid-cols-[1fr_auto_auto] gap-4 font-mono text-[10px] tracking-widest text-dim">
             <span>RESULTADO FINAL PROJETADO</span>
-            <span className="w-16 text-right">1º LUGAR</span>
-            <span className="w-16 text-right">NO 2º TURNO</span>
+            <span className="w-16 text-right">{turno === 2 ? "VITÓRIA" : "1º LUGAR"}</span>
+            <span className="w-16 text-right">{turno === 2 ? "" : "NO 2º TURNO"}</span>
           </div>
           <div className="space-y-6">
             {lista.map((c) => {
@@ -139,7 +147,7 @@ export function ProjecaoPanel({ candidatos }: { candidatos: Candidato[] }) {
                     </div>
                   </div>
                   <div className="w-16 text-right font-display text-lg font-semibold tabular-nums">{pctTxt(c.pPrimeiro)}%</div>
-                  <div className="w-16 text-right font-display text-lg font-semibold tabular-nums text-muted">{pctTxt(c.pTop2)}%</div>
+                  <div className="w-16 text-right font-display text-lg font-semibold tabular-nums text-muted">{turno === 2 ? "" : `${pctTxt(c.pTop2)}%`}</div>
                 </div>
               );
             })}

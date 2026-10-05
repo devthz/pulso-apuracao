@@ -6,6 +6,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BRAZIL_UFS, BRAZIL_VIEWBOX } from "@/lib/brazil-map";
 import { fmtInt, fmtPct } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
+import { comParams } from "@/lib/qs";
 import type { ResumoUF } from "@/lib/tse/types";
 import { UF_MAP } from "@/lib/ufs";
 
@@ -114,7 +115,7 @@ export function BrazilMap({
               strokeWidth={ativo ? 1.6 : 0.9}
               style={{ color: cor ?? "#3df2ff" }}
               onPointerEnter={() => setHover(l.id)}
-              onClick={() => navegar && router.push(`/uf/${l.id}${window.location.search}`)}
+              onClick={() => navegar && router.push(comParams(`/uf/${l.id}`))}
             />
           );
         })}

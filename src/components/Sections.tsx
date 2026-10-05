@@ -12,30 +12,40 @@ import { Hemicycle } from "./Hemicycle";
 import { Avatar, Bar, Num, Panel, PartyTag, SectionTitle, Skeleton, StatusTag, Vazio } from "./ui";
 
 /* ================= Governadores ================= */
-export function GovernadoresSection() {
-  const { data } = usePanorama("governador");
+export function GovernadoresSection({ turno = 1, somente, className = "mt-28" }: { turno?: 1 | 2; somente?: string[]; className?: string }) {
+  const { data } = usePanorama("governador", turno);
   const [reg, setReg] = useState<Regiao | "Todas">("Todas");
-  const ufs = (data?.ufs ?? []).filter((u) => reg === "Todas" || UF_MAP[u.uf]?.regiao === reg);
+  const ufs = (data?.ufs ?? [])
+    .filter((u) => !somente || somente.includes(u.uf))
+    .filter((u) => reg === "Todas" || UF_MAP[u.uf]?.regiao === reg);
   const eleitos = data?.ufs.filter((u) => u.lideres.some((l) => l.eleito)).length ?? 0;
   const seg = data?.ufs.filter((u) => u.lideres.some((l) => l.segundoTurno)).length ?? 0;
   const apurando = (data?.ufs.length ?? 0) - eleitos - seg;
 
   return (
-    <section className="mt-28">
+    <section className={className}>
       <SectionTitle
         id="governadores"
-        kicker="27 disputas estaduais"
+        kicker={turno === 2 ? `${somente?.length ?? ufs.length} estados decidem no 2º turno` : "27 disputas estaduais"}
         title={
           <>
-            Governadores<span className="text-lime">.</span>
+            Governadores{turno === 2 ? " · 2º turno" : ""}
+            <span className="text-lime">.</span>
           </>
         }
         right={
-          <div className="flex gap-6">
-            <Contador n={eleitos} label="eleitos no 1º turno" cor="var(--lime)" />
-            <Contador n={seg} label="vão ao 2º turno" cor="var(--cyan)" />
-            <Contador n={apurando} label="em apuração" cor="var(--amber)" />
-          </div>
+          turno === 2 ? (
+            <div className="flex gap-6">
+              <Contador n={ufs.filter((u) => u.lideres.some((l) => l.eleito)).length} label="já decididos" cor="var(--lime)" />
+              <Contador n={ufs.filter((u) => !u.lideres.some((l) => l.eleito)).length} label="em apuração" cor="var(--amber)" />
+            </div>
+          ) : (
+            <div className="flex gap-6">
+              <Contador n={eleitos} label="eleitos no 1º turno" cor="var(--lime)" />
+              <Contador n={seg} label="vão ao 2º turno" cor="var(--cyan)" />
+              <Contador n={apurando} label="em apuração" cor="var(--amber)" />
+            </div>
+          )
         }
       />
       <div className="scrollbar-none mb-5 flex gap-2 overflow-x-auto">
@@ -56,7 +66,7 @@ export function GovernadoresSection() {
         {!data && Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-48" />)}
         {ufs.map((u, i) => (
           <motion.div key={u.uf} layout initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 12) * 0.03 }}>
-            <CardUF u={u} />
+            <CardUF u={u} turno={turno} />
           </motion.div>
         ))}
       </div>
@@ -64,17 +74,21 @@ export function GovernadoresSection() {
   );
 }
 
-function ChanceGov({ u }: { u: ResumoUF }) {
+function ChanceGov({ u, turno = 1 }: { u: ResumoUF; turno?: 1 | 2 }) {
   const p = u.proj!;
   const lider = u.lideres.find((l) => l.numero === p.numero) ?? u.lideres[0];
-  const vence = p.pMaioria >= 0.5;
-  const valor = vence ? p.pMaioria : p.pSegundoTurno;
+  const vence = turno === 2 || p.pMaioria >= 0.5;
+  const valor = turno === 2 ? p.pPrimeiro : vence ? p.pMaioria : p.pSegundoTurno;
   const txt = valor >= 0.995 ? ">99" : valor <= 0.005 ? "<1" : String(Math.round(valor * 100));
   return (
     <div className="mt-4 border-t border-white/[0.06] pt-3">
       <div className="flex items-center justify-between font-mono text-[10.5px]">
         <span className="text-dim">
-          {vence ? `${lider?.nome.split(" ")[0] ?? "Líder"} vence no 1º turno` : "Vai para o 2º turno"}
+          {turno === 2
+            ? `Chance de ${lider?.nome.split(" ")[0] ?? "líder"} vencer`
+            : vence
+              ? `${lider?.nome.split(" ")[0] ?? "Líder"} vence no 1º turno`
+              : "Vai para o 2º turno"}
         </span>
         <span className={vence ? "text-lime" : "text-cyan"}>{txt}%</span>
       </div>
@@ -97,7 +111,7 @@ function Contador({ n, label, cor }: { n: number; label: string; cor: string }) 
   );
 }
 
-function CardUF({ u }: { u: ResumoUF }) {
+function CardUF({ u, turno = 1 }: { u: ResumoUF; turno?: 1 | 2 }) {
   const [a, b] = u.lideres;
   const cor = a && u.pct > 0 ? corPartido(a.partido) : "#3a3f50";
   return (
@@ -146,18 +160,18 @@ function CardUF({ u }: { u: ResumoUF }) {
             <div className="skeleton h-3 w-1/3" />
           </div>
         )}
-        {u.proj && !u.final && a && <ChanceGov u={u} />}
+        {u.proj && !u.final && a && <ChanceGov u={u} turno={turno} />}
       </Panel>
     </Link>
   );
 }
 
 /* ================= Senado ================= */
-export function SenadoSection() {
+export function SenadoSection({ className = "mt-28" }: { className?: string }) {
   const { data: b } = useBancada("senador");
   const { data: p } = usePanorama("senador");
   return (
-    <section className="mt-28">
+    <section className={className}>
       <SectionTitle
         id="senado"
         kicker="2/3 das cadeiras em disputa · 2 por estado"
@@ -213,12 +227,12 @@ function ProjTag({ b }: { b: Bancada }) {
 }
 
 /* ================= Câmara ================= */
-export function CamaraSection() {
+export function CamaraSection({ className = "mt-28" }: { className?: string }) {
   const { data: b } = useBancada("depfed");
   const top = b?.partidos.slice(0, 10) ?? [];
   const max = top[0]?.cadeiras ?? 1;
   return (
-    <section className="mt-28">
+    <section className={className}>
       <SectionTitle
         id="camara"
         kicker="Bancadas eleitas · regra do quociente eleitoral"
@@ -283,11 +297,11 @@ export function CamaraSection() {
 }
 
 /* ================= Assembleias ================= */
-export function AssembleiasSection() {
+export function AssembleiasSection({ className = "mt-28" }: { className?: string }) {
   const [uf, setUf] = useState("sp");
   const { data: b, isLoading } = useBancada("depest", uf);
   return (
-    <section className="mt-28">
+    <section className={className}>
       <SectionTitle
         id="assembleias"
         kicker="Deputados estaduais e distritais"

@@ -1,14 +1,15 @@
 import "server-only";
 import { after } from "next/server";
 import { UFS } from "../ufs";
-import { CACHE_TTL_S, INICIO_APURACAO, MODO_DADOS, urlFoto, urlResultado } from "./config";
-import { corridaSimulada, inicioSimulacao } from "./demo";
+import { CACHE_TTL_S, FASE_FORCADA, INICIO_2T, INICIO_APURACAO, MODO_DADOS, urlFoto, urlResultado, type Turno } from "./config";
+import { corridaSimulada, corridaSimuladaFinal, inicioSimulacao } from "./demo";
 import { normalizar, type RawUnificado } from "./normalize";
 import { projetar, type Projecao } from "./projecao";
 import { contarPorPartido, eleitosMajoritario, paraEleito, projetarCadeiras, somarAssentos } from "./seats";
 import type { Agremiacao, Bancada, Candidato, CargoKey, Corrida, Panorama, ResumoUF } from "./types";
 
-export class AindaNaoPublicado extends Error {}
+import { AindaNaoPublicado } from "./erros";
+export { AindaNaoPublicado };
 
 type Modo = "tse" | "simulacao";
 
@@ -44,8 +45,8 @@ async function comVaga<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function atualizar(e: Entrada, cargo: CargoKey, abr: string): Promise<Corrida> {
-  const url = urlResultado(cargo, abr);
+async function atualizar(e: Entrada, cargo: CargoKey, abr: string, turno: Turno): Promise<Corrida> {
+  const url = urlResultado(cargo, abr, turno);
   return comVaga(async () => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 15_000);
@@ -68,7 +69,7 @@ async function atualizar(e: Entrada, cargo: CargoKey, abr: string): Promise<Corr
       }
       if (!res.ok) throw new Error(`TSE respondeu ${res.status} para ${url}`);
       const raw = (await res.json()) as RawUnificado;
-      const nova = normalizar(raw, cargo, abr);
+      const nova = normalizar(raw, cargo, abr, turno);
       // nunca regride: se a CDN entregar uma cópia mais antiga, mantém a que já temos
       if (e.valor && nova.secoes.totalizadas < e.valor.secoes.totalizadas && !nova.final) {
         e.em = Date.now();
@@ -96,16 +97,16 @@ function emSegundoPlano(p: Promise<unknown>) {
   }
 }
 
-export async function getCorrida(cargo: CargoKey, abr: string, modo: Modo = MODO_DADOS): Promise<Corrida> {
-  if (modo === "simulacao") return corridaSimulada(cargo, abr);
+export async function getCorrida(cargo: CargoKey, abr: string, modo: Modo = MODO_DADOS, turno: Turno = 1): Promise<Corrida> {
+  if (modo === "simulacao") return corridaSimulada(cargo, abr, turno);
   // O arquivo "br" do TSE é consolidado com bem menos frequência que os das UFs (no 1º turno chegou a ficar
   // ~50 min atrás). Por isso o total nacional é a SOMA das 27 UFs + exterior, como fazem os outros painéis.
-  if (cargo === "presidente" && abr === "br") return getNacionalPresidente();
-  return getCorridaArquivo(cargo, abr);
+  if (cargo === "presidente" && abr === "br") return getNacionalPresidente(turno);
+  return getCorridaArquivo(cargo, abr, turno);
 }
 
-async function getCorridaArquivo(cargo: CargoKey, abr: string): Promise<Corrida> {
-  const chave = `${cargo}:${abr}`;
+async function getCorridaArquivo(cargo: CargoKey, abr: string, turno: Turno = 1): Promise<Corrida> {
+  const chave = `${cargo}:${abr}:${turno}`;
   let e = cache.get(chave);
   if (!e) cache.set(chave, (e = { em: 0 }));
   const agora = Date.now();
@@ -114,7 +115,7 @@ async function getCorridaArquivo(cargo: CargoKey, abr: string): Promise<Corrida>
   if (e.valor && agora - e.em < TTL_MS) return e.valor;
 
   const entrada = e;
-  const voo = (e.emVoo ??= atualizar(entrada, cargo, abr).finally(() => {
+  const voo = (e.emVoo ??= atualizar(entrada, cargo, abr, turno).finally(() => {
     entrada.emVoo = undefined;
   }));
   if (e.valor) {
@@ -129,14 +130,15 @@ const brasilia = () =>
   new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "medium" }).format(new Date());
 
 /* ---------- total nacional = soma das UFs + exterior ---------- */
-const gNac = globalThis as unknown as { __pulsoNac?: { st: number; quando: string } };
-const nac = (gNac.__pulsoNac ??= { st: -1, quando: "" });
+const gNac = globalThis as unknown as { __pulsoNac2?: Record<number, { st: number; quando: string }> };
+const nacs = (gNac.__pulsoNac2 ??= { 1: { st: -1, quando: "" }, 2: { st: -1, quando: "" } });
 
-async function getNacionalPresidente(): Promise<Corrida> {
+async function getNacionalPresidente(turno: Turno = 1): Promise<Corrida> {
+  const nac = nacs[turno];
   const abrs = [...UFS.map((u) => u.sigla), "zz"];
   const [partes, arquivoBR] = await Promise.all([
-    Promise.all(abrs.map((uf) => getCorridaArquivo("presidente", uf).catch(() => null))),
-    getCorridaArquivo("presidente", "br").catch(() => null),
+    Promise.all(abrs.map((uf) => getCorridaArquivo("presidente", uf, turno).catch(() => null))),
+    getCorridaArquivo("presidente", "br", turno).catch(() => null),
   ]);
   const ufs = partes.filter((x): x is Corrida => !!x);
   if (!ufs.length) {
@@ -172,7 +174,7 @@ async function getNacionalPresidente(): Promise<Corrida> {
         cands.set(c.numero, {
           ...c,
           ...(b ? { eleito: b.eleito, segundoTurno: b.segundoTurno, situacao: b.situacao, vice: b.vice ?? c.vice } : {}),
-          foto: urlFoto("presidente", "br", c.id),
+          foto: urlFoto("presidente", "br", c.id, turno),
           votos: c.votos,
         });
       }
@@ -252,14 +254,14 @@ const resumoVazio = (uf: string, erro: string): ResumoUF => ({
   uf, pct: 0, final: false, status: "aguardando", vagas: 0, validos: 0, atualizadoEm: null, lideres: [], erro,
 });
 
-export async function getPanorama(cargo: Exclude<CargoKey, "depfed" | "depest">, modo: Modo = MODO_DADOS): Promise<Panorama> {
+export async function getPanorama(cargo: Exclude<CargoKey, "depfed" | "depest">, modo: Modo = MODO_DADOS, turno: Turno = 1): Promise<Panorama> {
   const ufs = await Promise.all(
     UFS.map(async (u) => {
       try {
-        const c = await getCorrida(cargo, u.sigla, modo);
+        const c = await getCorrida(cargo, u.sigla, modo, turno);
         const r = resumir(c);
         if (cargo === "governador" && c.status !== "aguardando") {
-          const p = projetarMemo(`gov:${u.sigla}:${modo}`, [c], u.sigla, 2000);
+          const p = projetarMemo(`gov:${u.sigla}:${modo}:${turno}`, [c], u.sigla, 2000);
           const l = p?.candidatos[0];
           if (p && l)
             r.proj = { numero: l.numero, pMaioria: l.pMaioria, pPrimeiro: l.pPrimeiro, proj: l.proj, p05: l.p05, p95: l.p95, pSegundoTurno: p.pSegundoTurno };
@@ -273,12 +275,13 @@ export async function getPanorama(cargo: Exclude<CargoKey, "depfed" | "depest">,
   let nacional: Corrida | undefined;
   if (cargo === "presidente") {
     try {
-      nacional = await getCorrida("presidente", "br", modo);
+      nacional = await getCorrida("presidente", "br", modo, turno);
     } catch {
       nacional = undefined;
     }
   }
-  const inicioApuracao = modo === "simulacao" ? inicioSimulacao() : new Date(INICIO_APURACAO).toISOString();
+  const inicioApuracao =
+    modo === "simulacao" ? inicioSimulacao() : new Date(turno === 2 ? INICIO_2T : INICIO_APURACAO).toISOString();
   return { cargo, fonte: modo, geradoEm: brasilia(), inicioApuracao, nacional, ufs };
 }
 
@@ -295,15 +298,17 @@ function projetarMemo(id: string, partes: Corrida[], abr: string, sims = 3000) {
   return valor;
 }
 
-export async function getProjecaoPresidente(modo: Modo = MODO_DADOS): Promise<Projecao | null> {
+export async function getProjecaoPresidente(modo: Modo = MODO_DADOS, turno: Turno = 1): Promise<Projecao | null> {
   const abrs = [...UFS.map((u) => u.sigla), ...(modo === "tse" ? ["zz"] : [])];
   const partes = (
     await Promise.all(
-      abrs.map((uf) => (modo === "simulacao" ? Promise.resolve(corridaSimulada("presidente", uf)) : getCorridaArquivo("presidente", uf)).catch(() => null)),
+      abrs.map((uf) =>
+        (modo === "simulacao" ? Promise.resolve(corridaSimulada("presidente", uf, turno)) : getCorridaArquivo("presidente", uf, turno)).catch(() => null),
+      ),
     )
   ).filter((x): x is Corrida => !!x && x.status !== "aguardando");
   if (!partes.length) return null;
-  return projetarMemo(`pres:${modo}`, partes, "br", 4000);
+  return projetarMemo(`pres:${modo}:${turno}`, partes, "br", 4000);
 }
 
 /* ---------- base do simulador de 2º turno ---------- */
@@ -417,4 +422,96 @@ export async function getBancada(cargo: "depfed" | "depest" | "senador", abr: st
 export function enxugar(c: Corrida, limite = 120): Corrida {
   if (c.candidatos.length <= limite) return c;
   return { ...c, candidatos: c.candidatos.slice(0, limite) };
+}
+
+/* ---------- fase do site: 1º turno → entre turnos → 2º turno ---------- */
+export type Fase = "1t" | "entre" | "2t";
+export interface Finalista {
+  numero: string;
+  nome: string;
+  partido: string;
+  foto?: string;
+  pct: number;
+  votos: number;
+}
+export interface FaseInfo {
+  fase: Fase;
+  fonte: Modo;
+  inicio2t: string;
+  /** presidente decidido no 1º turno? */
+  presidenteEleito?: Finalista;
+  finalistas: Finalista[];
+  gov2t: { uf: string; finalistas: Finalista[] }[];
+  geradoEm: string;
+}
+
+const paraFinalista = (c: Corrida["candidatos"][number]): Finalista => ({
+  numero: c.numero,
+  nome: c.nome,
+  partido: c.partido,
+  foto: c.foto,
+  pct: c.pct,
+  votos: c.votos,
+});
+
+/** quem vai ao 2º turno numa corrida majoritária do 1º turno (ou null se ainda não dá para saber / não haverá) */
+function finalistasDe(c: Corrida): { eleito?: Finalista; finalistas: Finalista[] } | null {
+  const v = c.candidatos.filter((x) => x.valido);
+  const eleito = v.find((x) => x.eleito);
+  if (eleito) return { eleito: paraFinalista(eleito), finalistas: [] };
+  const marcados = v.filter((x) => x.segundoTurno);
+  if (marcados.length >= 2) return { finalistas: marcados.slice(0, 2).map(paraFinalista) };
+  const quaseFinal = c.final || c.secoes.pct >= 99.9;
+  if (!quaseFinal || v.length < 2) return null;
+  if (v[0].pct > 50) return { eleito: paraFinalista(v[0]), finalistas: [] };
+  return { finalistas: v.slice(0, 2).map(paraFinalista) };
+}
+
+const gFase = globalThis as unknown as { __pulsoFase?: Record<string, { em: number; valor: FaseInfo }> };
+const cacheFase = (gFase.__pulsoFase ??= {});
+
+export async function getFase(modo: Modo = MODO_DADOS, forcada?: Fase): Promise<FaseInfo> {
+  const chave = `${modo}:${forcada ?? FASE_FORCADA ?? ""}`;
+  const hit = cacheFase[chave];
+  if (hit && Date.now() - hit.em < 20_000) return hit.valor;
+
+  const agora = Date.now();
+  const inicio2t = new Date(INICIO_2T).getTime();
+  const f0 = forcada ?? FASE_FORCADA;
+  // na simulação com fase forçada, usa o 1º turno simulado já 100% apurado
+  const usarFinalSim = modo === "simulacao" && !!f0 && f0 !== "1t";
+  const pres = usarFinalSim
+    ? corridaSimuladaFinal("presidente", "br")
+    : await getCorrida("presidente", "br", modo, 1).catch(() => null);
+  const fp = pres ? finalistasDe(pres) : null;
+
+  let fase: Fase = f0 ?? "1t";
+  if (!f0) {
+    if (agora >= inicio2t) fase = "2t";
+    else if (fp || agora >= new Date("2026-10-05T06:00:00-03:00").getTime()) fase = "entre";
+  }
+
+  const gov2t: FaseInfo["gov2t"] = [];
+  if (fase !== "1t") {
+    const govs = await Promise.all(
+      UFS.map(async (u) => {
+        const c = usarFinalSim ? corridaSimuladaFinal("governador", u.sigla) : await getCorrida("governador", u.sigla, modo, 1).catch(() => null);
+        const f = c ? finalistasDe(c) : null;
+        return f && f.finalistas.length === 2 ? { uf: u.sigla, finalistas: f.finalistas } : null;
+      }),
+    );
+    for (const x of govs) if (x) gov2t.push(x);
+  }
+
+  const valor: FaseInfo = {
+    fase,
+    fonte: modo,
+    inicio2t: new Date(INICIO_2T).toISOString(),
+    presidenteEleito: fp?.eleito,
+    finalistas: fp?.finalistas ?? pres?.candidatos.filter((c) => c.valido).slice(0, 2).map(paraFinalista) ?? [],
+    gov2t,
+    geradoEm: brasilia(),
+  };
+  cacheFase[chave] = { em: agora, valor };
+  return valor;
 }

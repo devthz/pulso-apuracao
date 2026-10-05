@@ -8,6 +8,15 @@ export function modoDe(req: Request): "tse" | "simulacao" {
   return MODO_DADOS;
 }
 
+export function turnoDe(req: Request): 1 | 2 {
+  return new URL(req.url).searchParams.get("turno") === "2" ? 2 : 1;
+}
+
+export function faseDe(req: Request): "1t" | "entre" | "2t" | undefined {
+  const f = new URL(req.url).searchParams.get("fase");
+  return f === "1t" || f === "entre" || f === "2t" ? f : undefined;
+}
+
 export function json(data: unknown, status = 200) {
   return NextResponse.json(data, {
     status,

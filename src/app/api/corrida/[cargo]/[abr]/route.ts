@@ -1,4 +1,4 @@
-import { json, modoDe } from "@/lib/api-util";
+import { json, modoDe, turnoDe } from "@/lib/api-util";
 import { AindaNaoPublicado, enxugar, getCorrida } from "@/lib/tse/source";
 import { CARGO_KEYS, type CargoKey } from "@/lib/tse/types";
 import { isUF } from "@/lib/ufs";
@@ -13,7 +13,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ cargo: s
   if (!(uf === "br" && cargo === "presidente") && !(uf === "zz" && cargo === "presidente") && !isUF(uf))
     return json({ erro: "abrangência inválida" }, 400);
   try {
-    const c = await getCorrida(cargo as CargoKey, uf, modoDe(req));
+    const c = await getCorrida(cargo as CargoKey, uf, modoDe(req), turnoDe(req));
     return json(enxugar(c));
   } catch (e) {
     if (e instanceof AindaNaoPublicado) return json({ erro: "aguardando", mensagem: e.message }, 404);

@@ -5,9 +5,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import useSWR, { useSWRConfig } from "swr";
-import { usePanorama } from "@/hooks/data";
+import { turnoDaFase, useFase, usePanorama } from "@/hooks/data";
 import { fmtPct } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
+import { comParams } from "@/lib/qs";
 import { UFS } from "@/lib/ufs";
 
 export function Background() {
@@ -63,6 +64,11 @@ const relogio = {
     };
   },
 };
+/** relógio compartilhado (1 s) para outros componentes */
+export function useRelogioPublico() {
+  return useRelogio();
+}
+
 function useRelogio() {
   const t = useSyncExternalStore(
     relogio.assinar,
@@ -102,16 +108,31 @@ export function Logo() {
   );
 }
 
-const NAV = [
-  { href: "/#presidente", label: "Presidente" },
-  { href: "/#segundo-turno", label: "2º turno" },
-  { href: "/#governadores", label: "Governadores" },
-  { href: "/#senado", label: "Senado" },
-  { href: "/#camara", label: "Câmara" },
-  { href: "/#assembleias", label: "Assembleias" },
-];
+/** menu muda com a fase: no 1º turno é tudo na home; depois, a home é o 2º turno e o 1º turno vai para abas */
+function navPara(fase?: string) {
+  if (!fase || fase === "1t")
+    return [
+      { href: "/#presidente", label: "Presidente" },
+      { href: "/#segundo-turno", label: "Simulador 2º turno" },
+      { href: "/governadores", label: "Governadores" },
+      { href: "/senado", label: "Senado" },
+      { href: "/camara", label: "Câmara" },
+      { href: "/assembleias", label: "Assembleias" },
+    ];
+  return [
+    { href: "/", label: "2º turno" },
+    { href: "/primeiro-turno", label: "Presidente · 1º turno" },
+    { href: "/governadores", label: "Governadores" },
+    { href: "/senado", label: "Senado" },
+    { href: "/camara", label: "Câmara" },
+    { href: "/assembleias", label: "Assembleias" },
+  ];
+}
 
 export function Header() {
+  const { data: faseInfo } = useFase();
+  const pathname = usePathname();
+  const NAV = navPara(faseInfo?.fase);
   const agora = useRelogio();
   const { data } = usePanorama("presidente");
   const [cmdk, setCmdk] = useState(false);
@@ -142,11 +163,21 @@ export function Header() {
         <div className="mx-auto flex h-16 max-w-[1500px] items-center gap-6 px-4 sm:px-8">
           <Logo />
           <nav className="hidden items-center gap-1 lg:flex">
-            {NAV.map((n) => (
-              <a key={n.href} href={n.href} className="rounded-full px-3.5 py-1.5 text-[13px] text-muted transition hover:bg-white/5 hover:text-text">
-                {n.label}
-              </a>
-            ))}
+            {NAV.map((n) => {
+              const ativo = n.href === pathname;
+              return (
+                <Link
+                  key={n.href}
+                  href={comParams(n.href)}
+                  className={clsx(
+                    "rounded-full px-3.5 py-1.5 text-[13px] transition hover:bg-white/5 hover:text-text",
+                    ativo ? "bg-white/[0.07] text-text" : "text-muted",
+                  )}
+                >
+                  {n.label}
+                </Link>
+              );
+            })}
           </nav>
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {sim ? (
@@ -222,12 +253,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
   useEffect(() => input.current?.focus(), []);
   const ir = (it: ItemBusca) => {
     onClose();
-    const modo = new URLSearchParams(window.location.search).get("modo");
-    const qs = new URLSearchParams();
-    if (it.tipo === "cidade") qs.set("cidade", it.id);
-    if (modo) qs.set("modo", modo);
-    const s = qs.toString();
-    router.push(`/uf/${it.uf}${s ? `?${s}` : ""}`);
+    router.push(comParams(`/uf/${it.uf}`, { cidade: it.tipo === "cidade" ? it.id : undefined }));
   };
   return (
     <motion.div
@@ -294,7 +320,8 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
 
 /** Letreiro com o avanço por UF (presidente) */
 export function Ticker() {
-  const { data } = usePanorama("presidente");
+  const { data: f } = useFase();
+  const { data } = usePanorama("presidente", turnoDaFase(f));
   const pathname = usePathname();
   const itens = data?.ufs.filter((u) => u.lideres.length && u.pct > 0) ?? [];
   if (!itens.length || pathname.startsWith("/uf/")) return <div className="h-10 border-b border-white/[0.05]" />;
@@ -334,7 +361,8 @@ export function hms(ms: number) {
 
 export function useFaseApuracao() {
   const agora = useRelogio();
-  const { data } = usePanorama("presidente");
+  const { data: f } = useFase();
+  const { data } = usePanorama("presidente", turnoDaFase(f));
   const { mutate } = useSWRConfig();
   const inicio = data ? new Date(data.inicioApuracao).getTime() : null;
   const t = agora?.getTime() ?? null;
@@ -355,6 +383,8 @@ export function useFaseApuracao() {
 
   return {
     fase,
+    faseSite: f?.fase,
+    falta2t: f && t != null ? new Date(f.inicio2t).getTime() - t : 0,
     falta: inicio != null && t != null ? inicio - t : 0,
     decorrido: inicio != null && t != null ? t - inicio : 0,
     pct: data?.nacional?.secoes.pct ?? 0,
@@ -365,7 +395,20 @@ export function useFaseApuracao() {
 
 /** Chip do cabeçalho: "COMEÇA EM 01:12:33" → "EM ANDAMENTO 00:05:10" → "ENCERRADA" */
 export function TimerChip() {
-  const { fase, falta, decorrido } = useFaseApuracao();
+  const { fase, falta, decorrido, faseSite, falta2t } = useFaseApuracao();
+  if (faseSite === "entre") {
+    const dias = Math.floor(Math.max(0, falta2t) / 86_400_000);
+    const x2 = hms(falta2t % 86_400_000);
+    return (
+      <span className="chip !h-8 gap-2 border-cyan/40 bg-cyan/[0.08] tabular-nums text-cyan">
+        <span className="hidden sm:inline">2º TURNO EM</span>
+        <span className="text-text">
+          {dias > 0 ? `${dias}d ` : ""}
+          {x2.h}:{x2.m}:{x2.s}
+        </span>
+      </span>
+    );
+  }
   if (!fase) return <span className="chip w-[176px] animate-pulse text-dim">· · ·</span>;
   const x = fase === "antes" ? hms(falta) : hms(decorrido);
   return (

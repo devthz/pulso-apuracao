@@ -4,6 +4,7 @@
  * começa do zero quando o servidor sobe e termina em ~DURACAO_MS.
  */
 import { UF_MAP, UFS, type Regiao } from "../ufs";
+import { AindaNaoPublicado } from "./erros";
 import { projetarCadeiras } from "./seats";
 import type { Agremiacao, CargoKey, Candidato, Corrida } from "./types";
 
@@ -111,14 +112,14 @@ function montarCorrida(
   abr: string,
   vagas: number,
   specs: Spec[],
-  opts: { votosPorEleitor?: number; legenda?: Record<string, number> } = {},
+  opts: { votosPorEleitor?: number; legenda?: Record<string, number>; pFixo?: number; specsUF?: (uf: string) => Spec[] } = {},
 ): Corrida {
   const ufs = abr === "br" ? UFS.map((u) => u.sigla) : [abr];
   // agregação: para BR somamos as UFs (presidente)
   let eleitorado = 0, apurado = 0, comparecimento = 0, total = 0, brancos = 0, nulos = 0, ts = 0, st = 0;
   const votos = new Map<string, number>();
   for (const uf of ufs) {
-    const p = progresso(uf);
+    const p = opts.pFixo ?? progresso(uf);
     const el = Math.round((ELEITORADO_MI[uf] ?? 1) * 1_000_000);
     const secoes = Math.round(el / 330);
     const r = rng(`${cargo}-${uf}-comp`);
@@ -136,7 +137,7 @@ function montarCorrida(
     ts += secoes;
     st += Math.round(secoes * p);
 
-    const specsUF = abr === "br" ? presidentesUF(uf) : specs;
+    const specsUF = abr === "br" ? (opts.specsUF ?? presidentesUF)(uf) : specs;
     const soma = specsUF.reduce((a, s) => a + Math.max(0.05, s.share + s.deriva * (1 - p)), 0);
     for (const s of specsUF) {
       const sh = Math.max(0.05, s.share + s.deriva * (1 - p)) / soma;
@@ -300,7 +301,53 @@ function specsProporcional(cargo: "depfed" | "depest", uf: string, vagas: number
   return { specs, legenda };
 }
 
-export function corridaSimulada(cargo: CargoKey, abr: string): Corrida {
+/* ---------- 2º turno simulado ---------- */
+function presidentes2T(uf: string): Spec[] {
+  const s = presidentesUF(uf);
+  const [a, b, ...resto] = s;
+  const soma = s.reduce((x, c) => x + c.share, 0);
+  const restoShare = resto.reduce((x, c) => x + c.share, 0);
+  const vies = (a.share - b.share) / soma / 2; // quem lidera no estado atrai um pouco mais
+  const r = rng("2t-" + uf);
+  const fa = 0.5 + vies + (r() - 0.5) * 0.12;
+  return [
+    { ...a, share: a.share + restoShare * fa, deriva: (r() - 0.5) * 6 },
+    { ...b, share: b.share + restoShare * (1 - fa), deriva: (r() - 0.5) * 6 },
+  ];
+}
+
+function governador2T(abr: string): Corrida {
+  const specs = specsMajoritario("governador", abr);
+  const final1 = montarCorrida("governador", abr, 1, specs, { pFixo: 1 });
+  if (final1.candidatos[0].pct > 50) throw new AindaNaoPublicado(`sem 2º turno para governador em ${abr}`);
+  const [a, b] = final1.candidatos;
+  const sa = specs.find((x) => x.numero === a.numero)!;
+  const sb = specs.find((x) => x.numero === b.numero)!;
+  const r = rng("gov2t-" + abr);
+  const resto = 100 - a.pct - b.pct;
+  const fa = 0.4 + r() * 0.2;
+  return montarCorrida("governador", abr, 1, [
+    { ...sa, share: a.pct + resto * fa, deriva: (r() - 0.5) * 6 },
+    { ...sb, share: b.pct + resto * (1 - fa), deriva: (r() - 0.5) * 6 },
+  ]);
+}
+
+/** resultado final (100% apurado) do 1º turno simulado — para a fase entre turnos */
+export function corridaSimuladaFinal(cargo: "presidente" | "governador", abr: string): Corrida {
+  if (cargo === "governador") return montarCorrida("governador", abr, 1, specsMajoritario("governador", abr), { pFixo: 1 });
+  const specs: Spec[] = abr === "br" ? PRESIDENCIAVEIS.map((p) => ({ nome: p.nome, sg: p.sg, numero: P[p.sg].n, share: p.base, deriva: 0 })) : presidentesUF(abr);
+  return montarCorrida("presidente", abr, 1, specs, { pFixo: 1 });
+}
+
+export function corridaSimulada(cargo: CargoKey, abr: string, turno: 1 | 2 = 1): Corrida {
+  if (turno === 2) {
+    if (cargo === "presidente") {
+      const specs = abr === "br" ? presidentes2T("sp") : presidentes2T(abr);
+      return montarCorrida("presidente", abr, 1, specs, { specsUF: presidentes2T });
+    }
+    if (cargo === "governador") return governador2T(abr);
+    throw new AindaNaoPublicado("cargo sem 2º turno");
+  }
   const uf = UF_MAP[abr];
   if (cargo === "presidente") {
     const specs: Spec[] =

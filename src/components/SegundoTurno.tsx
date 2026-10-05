@@ -5,18 +5,15 @@ import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fmtInt, fmtPct } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
+import { comParams } from "@/lib/qs";
 import type { BaseSegundoTurno } from "@/lib/tse/source";
 import type { ResumoUF } from "@/lib/tse/types";
 import { BrazilMap } from "./BrazilMap";
 import { Avatar, Num, Panel, SectionTitle } from "./ui";
 
-const comModo = (p: string) => {
-  if (typeof window === "undefined") return p;
-  const m = new URLSearchParams(window.location.search).get("modo");
-  return m ? `${p}?modo=${m}` : p;
-};
+
 const jf = async (u: string) => {
-  const r = await fetch(comModo(u));
+  const r = await fetch(comParams(u));
   if (!r.ok) throw new Error("aguardando");
   return r.json();
 };

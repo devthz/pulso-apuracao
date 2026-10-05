@@ -12,11 +12,11 @@ import { ProjecaoPanel } from "./Projecao";
 import { Cronometro, hms, useFaseApuracao } from "./chrome";
 import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, Vazio } from "./ui";
 
-export function PresidentSection() {
-  const { data, error, isLoading } = usePanorama("presidente");
+export function PresidentSection({ turno = 1 }: { turno?: 1 | 2 }) {
+  const { data, error, isLoading } = usePanorama("presidente", turno);
   const [modoMapa, setModoMapa] = useState<"mun" | "uf">("mun");
   // o total nacional vem do endpoint próprio (1 arquivo, atualiza a cada 5 s); usa o mais avançado dos dois
-  const { data: br } = useCorrida("presidente", "br");
+  const { data: br } = useCorrida("presidente", "br", turno);
   const pan = data?.nacional;
   const nac = br && (!pan || br.secoes.totalizadas >= pan.secoes.totalizadas) ? br : pan;
   const semDados = !isLoading && (!nac || nac.status === "aguardando");
@@ -26,7 +26,7 @@ export function PresidentSection() {
       <div className="grid gap-6 xl:grid-cols-12">
         <Panel className="overflow-hidden p-6 sm:p-10 xl:col-span-7">
           <Glow />
-          <HeroHeader corrida={nac} />
+          <HeroHeader corrida={nac} turno={turno} />
           {isLoading && <HeroSkeleton />}
           {semDados && (
             <>
@@ -34,7 +34,7 @@ export function PresidentSection() {
               {error && <Vazio titulo="Sem conexão com o servidor" texto="Tentando de novo em instantes…" />}
             </>
           )}
-          {nac && nac.status !== "aguardando" && <FaceOff corrida={nac} />}
+          {nac && nac.status !== "aguardando" && <FaceOff corrida={nac} turno={turno} />}
         </Panel>
         <Panel className="flex flex-col p-6 sm:p-8 xl:col-span-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -58,7 +58,7 @@ export function PresidentSection() {
             </div>
           </div>
           {modoMapa === "mun" ? (
-            <MunicipalMap className="flex-1" />
+            <MunicipalMap className="flex-1" turno={turno} />
           ) : (
             <>
               <div className="flex flex-1 items-center">
@@ -70,7 +70,7 @@ export function PresidentSection() {
         </Panel>
       </div>
       {nac && nac.status !== "aguardando" && <StatsStrip corrida={nac} />}
-      {nac && nac.status !== "aguardando" && <ProjecaoPanel candidatos={nac.candidatos} />}
+      {nac && nac.status !== "aguardando" && <ProjecaoPanel candidatos={nac.candidatos} turno={turno} />}
     </section>
   );
 }
@@ -81,13 +81,13 @@ function Glow() {
   );
 }
 
-function HeroHeader({ corrida }: { corrida?: Corrida }) {
+function HeroHeader({ corrida, turno = 1 }: { corrida?: Corrida; turno?: 1 | 2 }) {
   return (
     <div className="flex items-start justify-between gap-6">
       <div className="min-w-0 flex-1">
         <div className="kicker mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
           <span className="h-px w-8 bg-gradient-to-r from-lime to-transparent" />
-          1º turno · 4 de outubro de 2026
+          {turno === 2 ? "2º turno · 25 de outubro de 2026" : "1º turno · 4 de outubro de 2026"}
           <FaseInline />
         </div>
         <h1 className="font-display text-[44px] font-bold leading-[1.02] tracking-[-0.03em] sm:text-[68px]">
@@ -135,7 +135,7 @@ function HeroSkeleton() {
   );
 }
 
-function FaceOff({ corrida }: { corrida: Corrida }) {
+function FaceOff({ corrida, turno = 1 }: { corrida: Corrida; turno?: 1 | 2 }) {
   const cands = corrida.candidatos.filter((c) => c.valido);
   const [a, b, ...resto] = cands;
   if (!a) return null;
@@ -158,7 +158,7 @@ function FaceOff({ corrida }: { corrida: Corrida }) {
         )}
       </div>
 
-      <CaboDeGuerra cands={cands} />
+      <CaboDeGuerra cands={cands} turno={turno} />
 
       {resto.length > 0 && (
         <div className="mt-8 grid gap-x-8 gap-y-4 sm:grid-cols-2">
@@ -233,13 +233,13 @@ function CandidatoGrande({ c, lider, status }: { c: Candidato; lider?: boolean; 
   );
 }
 
-function CaboDeGuerra({ cands }: { cands: Candidato[] }) {
+function CaboDeGuerra({ cands, turno = 1 }: { cands: Candidato[]; turno?: 1 | 2 }) {
   const tot = cands.reduce((a, c) => a + c.pct, 0) || 1;
   return (
     <div className="mt-8">
       <div className="mb-2 flex justify-between font-mono text-[10px] tracking-widest text-dim">
         <span>VOTOS VÁLIDOS</span>
-        <span>50% + 1 VENCE NO 1º TURNO</span>
+        <span>{turno === 2 ? "50% + 1 DOS VÁLIDOS VENCE" : "50% + 1 VENCE NO 1º TURNO"}</span>
       </div>
       <div className="relative flex h-4 w-full gap-[3px] overflow-hidden rounded-full">
         {cands.map((c) => (

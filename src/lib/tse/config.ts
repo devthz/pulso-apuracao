@@ -18,7 +18,18 @@ export const TSE = {
   ciclo: process.env.TSE_CICLO ?? "ele2026",
   federal: process.env.TSE_ELEICAO_FEDERAL ?? "6257",
   estadual: process.env.TSE_ELEICAO_ESTADUAL ?? "6259",
+  // 2º turno: campo cdt2 do ele-c.json oficial (conferido: 6258 e 6260)
+  federal2: process.env.TSE_ELEICAO_FEDERAL_2T ?? "6258",
+  estadual2: process.env.TSE_ELEICAO_ESTADUAL_2T ?? "6260",
 };
+
+export type Turno = 1 | 2;
+
+/** início da divulgação do 2º turno (25/10/2026, 17h de Brasília) */
+export const INICIO_2T = process.env.SEGUNDO_TURNO_INICIO ?? "2026-10-25T17:00:00-03:00";
+
+/** força a fase do site: "1t" | "entre" | "2t" (sem isso, é automática) */
+export const FASE_FORCADA = process.env.FASE as "1t" | "entre" | "2t" | undefined;
 
 /** "tse" (padrão) ou "simulacao" (dados fictícios gerados localmente, para desenvolver e demonstrar) */
 export const MODO_DADOS: "tse" | "simulacao" =
@@ -45,18 +56,19 @@ export function codigoCargo(cargo: CargoKey, uf: string): number {
   }
 }
 
-export function codigoEleicao(cargo: CargoKey) {
+export function codigoEleicao(cargo: CargoKey, turno: Turno = 1) {
+  if (turno === 2) return cargo === "presidente" ? TSE.federal2 : TSE.estadual2;
   return cargo === "presidente" ? TSE.federal : TSE.estadual;
 }
 
-export function urlResultado(cargo: CargoKey, abr: string) {
-  const ele = codigoEleicao(cargo);
+export function urlResultado(cargo: CargoKey, abr: string, turno: Turno = 1) {
+  const ele = codigoEleicao(cargo, turno);
   const c = String(codigoCargo(cargo, abr)).padStart(4, "0");
   const e = ele.padStart(6, "0");
   return `${TSE.base}/${TSE.ciclo}/${ele}/dados/${abr}/${abr}-c${c}-e${e}-u.json`;
 }
 
-export function urlFoto(cargo: CargoKey, abr: string, sqcand: string) {
+export function urlFoto(cargo: CargoKey, abr: string, sqcand: string, turno: Turno = 1) {
   // fotos são publicadas por UF da candidatura; presidente fica em "br"
-  return `${TSE.base}/${TSE.ciclo}/${codigoEleicao(cargo)}/fotos/${abr}/${sqcand}.jpeg`;
+  return `${TSE.base}/${TSE.ciclo}/${codigoEleicao(cargo, turno)}/fotos/${abr}/${sqcand}.jpeg`;
 }

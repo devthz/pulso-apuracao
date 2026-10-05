@@ -12,6 +12,7 @@ import useSWR from "swr";
 import { fmtInt, fmtPct } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
 import type { MunicipiosPayload } from "@/lib/tse/municipios";
+import { comParams } from "@/lib/qs";
 import { UF_MAP } from "@/lib/ufs";
 
 export interface Geo {
@@ -39,20 +40,17 @@ export const IBGE_UF: Record<string, string> = {
 
 export const normalizar = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
-const comModo = (p: string) => {
-  if (typeof window === "undefined") return p;
-  const m = new URLSearchParams(window.location.search).get("modo");
-  return m ? `${p}?modo=${m}` : p;
-};
+
 /**
  * Acumula os resultados no navegador: se uma resposta vier de um servidor "frio" (com menos municípios),
  * o mapa não volta para trás — cada município só é trocado por uma leitura igual ou mais avançada.
  * O acumulado vive no módulo, então sobrevive à navegação entre páginas.
  */
-let acumulado: MunicipiosPayload | null = null;
+const acumulados: Record<string, MunicipiosPayload> = {};
 async function buscarMunicipios(u: string): Promise<MunicipiosPayload> {
-  const novo = (await fetch(comModo(u)).then((r) => r.json())) as MunicipiosPayload;
-  if (!acumulado || acumulado.fonte !== novo.fonte) return (acumulado = novo);
+  const novo = (await fetch(comParams(u)).then((r) => r.json())) as MunicipiosPayload;
+  const acumulado = acumulados[u];
+  if (!acumulado || acumulado.fonte !== novo.fonte) return (acumulados[u] = novo);
   const m = { ...acumulado.m };
   let mudou = false;
   for (const [id, r] of Object.entries(novo.m)) {
@@ -63,14 +61,13 @@ async function buscarMunicipios(u: string): Promise<MunicipiosPayload> {
     }
   }
   if (!mudou) return acumulado;
-  acumulado = {
+  return (acumulados[u] = {
     ...novo,
     cand: { ...acumulado.cand, ...novo.cand },
     m,
     carregados: Object.keys(m).length,
     total: Math.max(novo.total, acumulado.total),
-  };
-  return acumulado;
+  });
 }
 export const geoFetcher = (u: string) => fetch(u).then((r) => r.json());
 export const GEO_URL = "/geo/municipios.json";
@@ -102,7 +99,7 @@ const cacheFormas = new WeakMap<Geo, Map<string, Forma[]>>();
 const assinatura = (d?: MunicipiosPayload) =>
   d ? `${d.carregados}:${Object.values(d.m).reduce((a, r) => a + Number(r[0]) + Number(r[1]), 0)}` : "";
 
-export function MunicipalMap({ uf, foco, className }: { uf?: string; foco?: string; className?: string }) {
+export function MunicipalMap({ uf, foco, className, turno = 1 }: { uf?: string; foco?: string; className?: string; turno?: 1 | 2 }) {
   const router = useRouter();
   const caixa = useRef<HTMLDivElement>(null);
   const tela = useRef<HTMLCanvasElement>(null);
@@ -125,10 +122,11 @@ export function MunicipalMap({ uf, foco, className }: { uf?: string; foco?: stri
   }, []);
 
   const { data: geo } = useSWR<Geo>(visivel ? GEO_URL : null, geoFetcher, geoOpts);
-  const { data } = useSWR<MunicipiosPayload>(visivel ? "/api/municipios" : null, buscarMunicipios, {
+  const chaveMun = turno === 2 ? "/api/municipios?turno=2" : "/api/municipios";
+  const { data } = useSWR<MunicipiosPayload>(visivel ? chaveMun : null, buscarMunicipios, {
     refreshInterval: 20_000,
     keepPreviousData: true,
-    fallbackData: acumulado ?? undefined,
+    fallbackData: acumulados[chaveMun],
     compare: (a, b) => a === b || assinatura(a) === assinatura(b),
   });
 
@@ -482,7 +480,7 @@ export function MunicipalMap({ uf, foco, className }: { uf?: string; foco?: stri
         }}
         onPointerUp={(e) => {
           if (soltar()) return;
-          if (!uf && view.k === 1 && e.detail === 1 && hover) router.push(`/uf/${hover.uf}?cidade=${hover.id}`);
+          if (!uf && view.k === 1 && e.detail === 1 && hover) router.push(comParams(`/uf/${hover.uf}`, { cidade: hover.id }));
           else if (hover && e.detail === 1) setFixo(hover);
         }}
         onPointerLeave={() => {

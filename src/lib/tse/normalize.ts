@@ -1,4 +1,4 @@
-import { urlFoto } from "./config";
+import { urlFoto, type Turno } from "./config";
 import type { Agremiacao, CargoKey, Candidato, Corrida } from "./types";
 
 /* Formato bruto do arquivo unificado "-u.json" (EA20) do TSE, leiaute 2026.
@@ -33,7 +33,7 @@ const pctBr = (s: S) => (s == null || s === "" ? 0 : Number(String(s).replace(",
 const tipoAgr = (tp: S): Agremiacao["tipo"] =>
   tp === "f" ? "federacao" : tp === "c" ? "coligacao" : "partido";
 
-export function normalizar(raw: RawUnificado, cargo: CargoKey, abr: string): Corrida {
+export function normalizar(raw: RawUnificado, cargo: CargoKey, abr: string, turno: Turno = 1): Corrida {
   const carg = raw.carg?.[0];
   const s = raw.s ?? {};
   const e = raw.e ?? {};
@@ -82,7 +82,7 @@ export function normalizar(raw: RawUnificado, cargo: CargoKey, abr: string): Cor
           situacao: st,
           valido,
           vice: vice ? String(vice.nmu ?? vice.nm ?? "") : undefined,
-          foto: c.sqcand ? urlFoto(cargo, abr, String(c.sqcand)) : undefined,
+          foto: c.sqcand ? urlFoto(cargo, abr, String(c.sqcand), turno) : undefined,
         });
       }
     }

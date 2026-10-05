@@ -74,9 +74,15 @@ TSE_BASE=https://resultados-sim.tse.jus.br/simulado/simulado2026 \
 TSE_ELEICAO_FEDERAL=21270 TSE_ELEICAO_ESTADUAL=21272 npm run dev
 ```
 
-### 2º turno (25/10)
+### Fases do site (automático)
 
-`TSE_ELEICAO_FEDERAL=6258 TSE_ELEICAO_ESTADUAL=6260` (confirme no `cdt2` de `resultados.tse.jus.br/oficial/comum/config/ele-c.json`).
+| Fase | Quando | Home |
+| --- | --- | --- |
+| `1t` | até o 1º turno ser decidido | apuração do 1º turno (tudo na home) |
+| `entre` | 1º turno decidido (ou a partir de 05/10 6h) | "Rumo ao 2º turno": contagem regressiva, finalistas, simulador, governadores no 2º turno; 1º turno nas abas |
+| `2t` | 25/10/2026 a partir das 17h | apuração ao vivo do 2º turno (presidente + governadores); 1º turno nas abas |
+
+Os códigos do 2º turno já estão configurados (federal `6258`, estadual `6260`, conferidos no `cdt2` do `ele-c.json`). Para forçar uma fase: variável `FASE=1t|entre|2t` na Vercel, ou `?fase=entre` na URL para testar (`?modo=simulacao&fase=2t` mostra o 2º turno simulado).
 
 ## Créditos
 

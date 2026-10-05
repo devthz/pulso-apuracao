@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { useState } from "react";
-import { useBancada, useCorrida } from "@/hooks/data";
+import { useBancada, useCorrida, useFase } from "@/hooks/data";
 import { fmtInt, fmtPct, soHora } from "@/lib/format";
 import { corPartido } from "@/lib/parties";
 import type { CargoKey, Corrida } from "@/lib/tse/types";
@@ -14,6 +14,9 @@ import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, V
 
 export function UFView({ uf, cidade }: { uf: string; cidade?: string }) {
   const info = UF_MAP[uf];
+  const { data: faseInfo } = useFase();
+  const segundo = faseInfo?.fase === "2t";
+  const gov2t = !!faseInfo?.gov2t.some((g) => g.uf === uf);
   const { data: gov } = useCorrida("governador", uf);
   const i = UFS.findIndex((u) => u.sigla === uf);
   const ant = UFS[(i - 1 + UFS.length) % UFS.length];
@@ -59,16 +62,36 @@ export function UFView({ uf, cidade }: { uf: string; cidade?: string }) {
         </div>
       </div>
 
+      {segundo && (
+        <div className="mt-10">
+          <div className="kicker mb-4 flex items-center gap-3">
+            <span className="h-px w-8 bg-gradient-to-r from-cyan to-transparent" />
+            2º turno · 25 de outubro
+          </div>
+          <div className="grid gap-6 xl:grid-cols-2">
+            {!faseInfo?.presidenteEleito && <RaceCard cargo="presidente" uf={uf} titulo={`Presidente em ${info.nome}`} sub="2º turno" turno={2} />}
+            {gov2t && <RaceCard cargo="governador" uf={uf} titulo="Governador" sub="2º turno" turno={2} />}
+          </div>
+        </div>
+      )}
+
       <Panel className="mt-10 p-6 sm:p-8">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
           <div>
-            <div className="kicker">Presidente · quem lidera em cada cidade</div>
+            <div className="kicker">Presidente{segundo ? " · 2º turno" : ""} · quem lidera em cada cidade</div>
             <div className="font-display mt-2 text-2xl font-semibold">Mapa de {info.nome}</div>
           </div>
           <div className="font-mono text-[11px] text-dim">busque uma cidade · duplo clique aproxima · arraste para mover</div>
         </div>
-        <MunicipalMap uf={uf} foco={cidade} className="mx-auto max-w-[900px]" />
+        <MunicipalMap uf={uf} foco={cidade} turno={segundo && !faseInfo?.presidenteEleito ? 2 : 1} className="mx-auto max-w-[900px]" />
       </Panel>
+
+      {segundo && (
+        <div className="kicker -mb-4 mt-16 flex items-center gap-3">
+          <span className="h-px w-8 bg-gradient-to-r from-lime to-transparent" />
+          1º turno · 4 de outubro
+        </div>
+      )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <RaceCard cargo="governador" uf={uf} titulo="Governador" />
@@ -111,8 +134,8 @@ function CabecalhoCard({ titulo, sub, corrida }: { titulo: string; sub?: string;
   );
 }
 
-function RaceCard({ cargo, uf, titulo, sub, horizontal }: { cargo: CargoKey; uf: string; titulo: string; sub?: string; horizontal?: boolean }) {
-  const { data, error } = useCorrida(cargo, uf);
+function RaceCard({ cargo, uf, titulo, sub, horizontal, turno = 1 }: { cargo: CargoKey; uf: string; titulo: string; sub?: string; horizontal?: boolean; turno?: 1 | 2 }) {
+  const { data, error } = useCorrida(cargo, uf, turno);
   const [todos, setTodos] = useState(false);
   const cands = data?.candidatos.filter((c) => c.valido) ?? [];
   const lista = todos ? cands : cands.slice(0, horizontal ? 8 : 6);
