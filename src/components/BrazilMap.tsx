@@ -19,11 +19,16 @@ export function BrazilMap({
   destaque,
   modo = "lider",
   className,
+  rotulo,
+  navegar = true,
 }: {
   ufs: ResumoUF[];
   destaque?: string;
   modo?: "lider";
   className?: string;
+  /** texto embaixo da sigla e no topo do balão (padrão: % apurado) */
+  rotulo?: (u: ResumoUF) => string;
+  navegar?: boolean;
 }) {
   const router = useRouter();
   const [hover, setHover] = useState<string | null>(null);
@@ -109,7 +114,7 @@ export function BrazilMap({
               strokeWidth={ativo ? 1.6 : 0.9}
               style={{ color: cor ?? "#3df2ff" }}
               onPointerEnter={() => setHover(l.id)}
-              onClick={() => router.push(`/uf/${l.id}${window.location.search}`)}
+              onClick={() => navegar && router.push(`/uf/${l.id}${window.location.search}`)}
             />
           );
         })}
@@ -125,7 +130,7 @@ export function BrazilMap({
               </tspan>
               {u && u.pct > 0 && !fora && (
                 <tspan x={c.x} dy={11} fontSize={8} fill="rgba(255,255,255,.7)" className="font-mono">
-                  {fmtPct(u.pct, 0)}%
+                  {rotulo ? rotulo(u) : `${fmtPct(u.pct, 0)}%`}
                 </tspan>
               )}
             </>
@@ -169,10 +174,10 @@ export function BrazilMap({
           >
             <div className="flex items-baseline justify-between">
               <div className="font-display text-base font-semibold">{UF_MAP[hover]?.nome}</div>
-              <div className="font-mono text-[11px] text-muted">{info ? `${fmtPct(info.pct, 1)}%` : "—"}</div>
+              <div className="font-mono text-[11px] text-muted">{info ? (rotulo ? rotulo(info) : `${fmtPct(info.pct, 1)}%`) : "—"}</div>
             </div>
             <div className="mt-1 h-0.5 w-full overflow-hidden rounded bg-white/10">
-              <div className="h-full bg-gradient-to-r from-lime to-cyan" style={{ width: `${info?.pct ?? 0}%` }} />
+              <div className="h-full bg-gradient-to-r from-lime to-cyan" style={{ width: `${rotulo ? 0 : (info?.pct ?? 0)}%` }} />
             </div>
             <div className="mt-3 space-y-2.5">
               {info?.lideres.slice(0, 3).map((l) => (
@@ -195,7 +200,7 @@ export function BrazilMap({
             </div>
             {info && info.validos > 0 && (
               <div className="mt-3 border-t border-white/5 pt-2 font-mono text-[10px] text-dim">
-                {fmtInt(info.validos)} votos válidos · clique para abrir
+                {fmtInt(info.validos)} votos válidos{navegar ? " · clique para abrir" : ""}
               </div>
             )}
           </motion.div>

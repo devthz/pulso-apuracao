@@ -306,6 +306,68 @@ export async function getProjecaoPresidente(modo: Modo = MODO_DADOS): Promise<Pr
   return projetarMemo(`pres:${modo}`, partes, "br", 4000);
 }
 
+/* ---------- base do simulador de 2º turno ---------- */
+export interface BaseSegundoTurno {
+  fonte: Modo;
+  geradoEm: string;
+  pctApurado: number;
+  /** candidatos modelados individualmente (os mais votados no país) */
+  candidatos: { numero: string; nome: string; partido: string; foto?: string; votos: number; pct: number }[];
+  /** por UF (e exterior): votos projetados para 100% das seções */
+  ufs: { uf: string; votos: Record<string, number>; outros: number; brancosNulos: number; abstencao: number; eleitorado: number }[];
+}
+
+export async function getBaseSegundoTurno(modo: Modo = MODO_DADOS): Promise<BaseSegundoTurno | null> {
+  const abrs = [...UFS.map((u) => u.sigla), ...(modo === "tse" ? ["zz"] : [])];
+  const partes = (
+    await Promise.all(
+      abrs.map((uf) => (modo === "simulacao" ? Promise.resolve(corridaSimulada("presidente", uf)) : getCorridaArquivo("presidente", uf)).catch(() => null)),
+    )
+  ).filter((x): x is Corrida => !!x && x.status !== "aguardando" && x.votos.validos > 0);
+  if (!partes.length) return null;
+
+  const tot = new Map<string, { nome: string; partido: string; foto?: string; votos: number }>();
+  for (const p of partes)
+    for (const c of p.candidatos)
+      if (c.valido) {
+        const t = tot.get(c.numero) ?? { nome: c.nome, partido: c.partido, foto: urlFoto("presidente", "br", c.id), votos: 0 };
+        t.votos += c.votos;
+        tot.set(c.numero, t);
+      }
+  const ordem = [...tot.entries()].sort((a, b) => b[1].votos - a[1].votos);
+  const top = ordem.slice(0, 8);
+  const vvTotal = partes.reduce((a, p) => a + p.votos.validos, 0);
+
+  const ufs = partes.map((p) => {
+    // fator para levar o apurado a 100% das seções (pelo eleitorado já apurado)
+    const f = p.final || !p.eleitorado.apurado ? 1 : Math.max(1, p.eleitorado.total / p.eleitorado.apurado);
+    const votos: Record<string, number> = {};
+    let soma = 0;
+    for (const [n] of top) {
+      const v = p.candidatos.find((c) => c.numero === n && c.valido)?.votos ?? 0;
+      votos[n] = Math.round(v * f);
+      soma += v;
+    }
+    const bn = p.votos.brancos + p.votos.nulos;
+    return {
+      uf: p.abrangencia,
+      votos,
+      outros: Math.round(Math.max(0, p.votos.validos - soma) * f),
+      brancosNulos: Math.round(bn * f),
+      abstencao: Math.round(p.eleitorado.abstencao * f),
+      eleitorado: p.eleitorado.total,
+    };
+  });
+  const pct = (partes.reduce((a, p) => a + p.secoes.totalizadas, 0) / Math.max(1, partes.reduce((a, p) => a + p.secoes.total, 0))) * 100;
+  return {
+    fonte: modo,
+    geradoEm: brasilia(),
+    pctApurado: pct,
+    candidatos: top.map(([numero, t]) => ({ numero, nome: t.nome, partido: t.partido, foto: modo === "tse" ? t.foto : undefined, votos: t.votos, pct: vvTotal ? (t.votos / vvTotal) * 100 : 0 })),
+    ufs,
+  };
+}
+
 /** Bancadas eleitas/projetadas. depfed sem UF = Câmara inteira; senador = 2 vagas por UF. */
 export async function getBancada(cargo: "depfed" | "depest" | "senador", abr: string | null, modo: Modo = MODO_DADOS): Promise<Bancada> {
   const alvo = abr ? [abr] : UFS.map((u) => u.sigla);

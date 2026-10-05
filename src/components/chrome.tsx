@@ -104,6 +104,7 @@ export function Logo() {
 
 const NAV = [
   { href: "/#presidente", label: "Presidente" },
+  { href: "/#segundo-turno", label: "2º turno" },
   { href: "/#governadores", label: "Governadores" },
   { href: "/#senado", label: "Senado" },
   { href: "/#camara", label: "Câmara" },

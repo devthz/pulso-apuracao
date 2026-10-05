@@ -94,6 +94,33 @@ body {
 }
 
 @layer components {
+  /* controles deslizantes do simulador */
+  .faixa {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    outline: none;
+    cursor: pointer;
+  }
+  .faixa::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid #040509;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4), 0 0 12px rgba(255, 255, 255, 0.35);
+  }
+  .faixa::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid #040509;
+  }
+
 /* ---------- painéis de vidro com holofote ---------- */
 .panel {
   position: relative;
