@@ -29,7 +29,7 @@ export type Turno = 1 | 2;
 export const INICIO_2T = process.env.SEGUNDO_TURNO_INICIO ?? "2026-10-25T17:00:00-03:00";
 
 /** força a fase do site: "1t" | "entre" | "2t" (sem isso, é automática) */
-export const FASE_FORCADA = process.env.FASE as "1t" | "entre" | "2t" | undefined;
+export const FASE_FORCADA = process.env.FASE as "1t" | "entre" | "2t" | "final" | undefined;
 
 /** "tse" (padrão) ou "simulacao" (dados fictícios gerados localmente, para desenvolver e demonstrar) */
 export const MODO_DADOS: "tse" | "simulacao" =

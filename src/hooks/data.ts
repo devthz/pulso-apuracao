@@ -41,4 +41,4 @@ export const useProjecao = (turno: Turno = 1) =>
 
 /** fase do site (1º turno, entre turnos, 2º turno) */
 export const useFase = () => useSWR<FaseInfo, ApiErro>("/api/fase", fetcher, { refreshInterval: 60_000, keepPreviousData: true });
-export const turnoDaFase = (f?: FaseInfo) => (f?.fase === "2t" ? 2 : 1) as Turno;
+export const turnoDaFase = (f?: FaseInfo) => (f?.fase === "2t" || f?.fase === "final" ? 2 : 1) as Turno;

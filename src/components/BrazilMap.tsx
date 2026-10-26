@@ -21,6 +21,7 @@ export function BrazilMap({
   modo = "lider",
   className,
   rotulo,
+  intensidade,
   navegar = true,
 }: {
   ufs: ResumoUF[];
@@ -29,6 +30,8 @@ export function BrazilMap({
   className?: string;
   /** texto embaixo da sigla e no topo do balão (padrão: % apurado) */
   rotulo?: (u: ResumoUF) => string;
+  /** opacidade do preenchimento (0–1); padrão: margem do líder + % apurado */
+  intensidade?: (u: ResumoUF) => number;
   navegar?: boolean;
 }) {
   const router = useRouter();
@@ -99,7 +102,7 @@ export function BrazilMap({
           const cor = lider && u.pct > 0 ? corPartido(lider.partido) : null;
           // intensidade: margem do líder + quanto já foi apurado
           const margem = lider && vice ? lider.pct - vice.pct : lider ? lider.pct : 0;
-          const op = cor ? 0.35 + Math.min(0.65, (margem / 25) * 0.4 + (u.pct / 100) * 0.35) : 1;
+          const op = cor ? (intensidade ? intensidade(u) : 0.35 + Math.min(0.65, (margem / 25) * 0.4 + (u.pct / 100) * 0.35)) : 1;
           const ativo = hover === l.id || destaque === l.id;
           return (
             <path

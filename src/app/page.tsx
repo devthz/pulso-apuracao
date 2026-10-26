@@ -1,6 +1,7 @@
 import { AbasPrimeiroTurno, EntreTurnosHero, GovernadoresSegundoTurno } from "@/components/EntreTurnos";
 import { FaseWatcher } from "@/components/FaseWatcher";
 import { PresidentSection } from "@/components/President";
+import { ResultadoFinal } from "@/components/ResultadoFinal";
 import { SegundoTurnoSection } from "@/components/SegundoTurno";
 import { AssembleiasSection, CamaraSection, GovernadoresSection, SenadoSection } from "@/components/Sections";
 import { MODO_DADOS } from "@/lib/tse/config";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function Home({ searchParams }: PageProps<"/">) {
   const sp = await searchParams;
   const modo = sp.modo === "simulacao" || sp.modo === "demo" ? "simulacao" : sp.modo === "tse" ? "tse" : MODO_DADOS;
-  const f = sp.fase === "1t" || sp.fase === "entre" || sp.fase === "2t" ? sp.fase : undefined;
+  const f = sp.fase === "1t" || sp.fase === "entre" || sp.fase === "2t" || sp.fase === "final" ? sp.fase : undefined;
   let info: FaseInfo | null = null;
   try {
     info = await getFase(modo, f);
@@ -40,6 +41,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
           <GovernadoresSegundoTurno info={info} />
         </>
       )}
+      {fase === "final" && info && <ResultadoFinal info={info} />}
       {fase === "2t" && info && (
         <>
           {!info.presidenteEleito && <PresidentSection turno={2} />}

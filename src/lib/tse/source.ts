@@ -1,7 +1,8 @@
 import "server-only";
 import { after } from "next/server";
 import { UFS } from "../ufs";
-import { CACHE_TTL_S, FASE_FORCADA, INICIO_2T, INICIO_APURACAO, MODO_DADOS, urlFoto, urlResultado, type Turno } from "./config";
+import { kvAtivo, kvDel, kvGet, kvSet, kvTrava } from "../kv";
+import { CACHE_TTL_S, FASE_FORCADA, INICIO_2T, INICIO_APURACAO, MODO_DADOS, TSE, urlFoto, urlResultado, type Turno } from "./config";
 import { corridaSimulada, corridaSimuladaFinal, inicioSimulacao } from "./demo";
 import { normalizar, type RawUnificado } from "./normalize";
 import { projetar, type Projecao } from "./projecao";
@@ -308,7 +309,53 @@ export async function getProjecaoPresidente(modo: Modo = MODO_DADOS, turno: Turn
     )
   ).filter((x): x is Corrida => !!x && x.status !== "aguardando");
   if (!partes.length) return null;
-  return projetarMemo(`pres:${modo}:${turno}`, partes, "br", 4000);
+  const proj = projetarMemo(`pres:${modo}:${turno}`, partes, "br", 4000);
+  if (proj && modo === "tse") emSegundoPlano(gravarHistorico(turno, proj));
+  return proj;
+}
+
+/* ---------- histórico do modelo: grava um retrato por minuto no Redis durante a apuração ----------
+ * Em 2026 a linha do tempo do 2º turno teve de ser reconstruída (scripts/historico-modelo.ts). A partir daqui,
+ * toda apuração fica registrada de verdade e pode ser mostrada depois. */
+const gHist = globalThis as unknown as { __pulsoHist?: Record<number, number> };
+const ultimoHist = (gHist.__pulsoHist ??= {});
+async function gravarHistorico(turno: Turno, p: Projecao) {
+  if (!kvAtivo || p.pctApurado <= 0) return;
+  const agora = Date.now();
+  if (agora - (ultimoHist[turno] ?? 0) < 60_000) return;
+  ultimoHist[turno] = agora;
+  const chave = `pulso:hist:${TSE.ciclo}:${turno === 2 ? TSE.federal2 : TSE.federal}`;
+  const trava = await kvTrava(`${chave}:trava`, String(agora), 30);
+  if (!trava) return;
+  try {
+    const atual = JSON.parse((await kvGet(chave)) ?? "[]") as unknown[];
+    const ultimo = atual[atual.length - 1] as { pct?: number } | undefined;
+    if (ultimo && ultimo.pct === Math.round(p.pctApurado * 100) / 100) return; // nada mudou
+    const hora = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(agora));
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    atual.push({
+      h: hora,
+      ts: agora,
+      pct: r2(p.pctApurado),
+      at: Object.fromEntries(p.candidatos.map((c) => [c.numero, r2(c.atual)])),
+      pv: Object.fromEntries(p.candidatos.map((c) => [c.numero, Math.round(c.pPrimeiro * 1000) / 1000])),
+      pj: Object.fromEntries(p.candidatos.map((c) => [c.numero, [r2(c.p05), r2(c.proj), r2(c.p95)]])),
+      p2t: Math.round(p.pSegundoTurno * 1000) / 1000,
+    });
+    await kvSet(chave, JSON.stringify(atual), 60 * 60 * 24 * 400);
+  } finally {
+    await kvDel(`${chave}:trava`);
+  }
+}
+
+export async function getHistoricoGravado(turno: Turno): Promise<unknown[]> {
+  if (!kvAtivo) return [];
+  const chave = `pulso:hist:${TSE.ciclo}:${turno === 2 ? TSE.federal2 : TSE.federal}`;
+  try {
+    return JSON.parse((await kvGet(chave)) ?? "[]");
+  } catch {
+    return [];
+  }
 }
 
 /* ---------- base do simulador de 2º turno ---------- */
@@ -425,7 +472,7 @@ export function enxugar(c: Corrida, limite = 120): Corrida {
 }
 
 /* ---------- fase do site: 1º turno → entre turnos → 2º turno ---------- */
-export type Fase = "1t" | "entre" | "2t";
+export type Fase = "1t" | "entre" | "2t" | "final";
 export interface Finalista {
   numero: string;
   nome: string;
@@ -440,6 +487,8 @@ export interface FaseInfo {
   inicio2t: string;
   /** presidente decidido no 1º turno? */
   presidenteEleito?: Finalista;
+  /** vencedor do 2º turno (fase final) */
+  vencedor?: Finalista;
   finalistas: Finalista[];
   gov2t: { uf: string; finalistas: Finalista[] }[];
   geradoEm: string;
@@ -487,7 +536,11 @@ export async function getFase(modo: Modo = MODO_DADOS, forcada?: Fase): Promise<
 
   let fase: Fase = f0 ?? "1t";
   if (!f0) {
-    if (agora >= inicio2t) fase = "2t";
+    if (agora >= inicio2t) {
+      // 2º turno decidido (totalização final ou ~100%) → fase "final"
+      const p2 = await getCorrida("presidente", "br", modo, 2).catch(() => null);
+      fase = p2 && (p2.final || p2.secoes.pct >= 99.99) ? "final" : "2t";
+    }
     else if (fp || agora >= new Date("2026-10-05T06:00:00-03:00").getTime()) fase = "entre";
   }
 
@@ -508,10 +561,63 @@ export async function getFase(modo: Modo = MODO_DADOS, forcada?: Fase): Promise<
     fonte: modo,
     inicio2t: new Date(INICIO_2T).toISOString(),
     presidenteEleito: fp?.eleito,
+    vencedor: undefined,
     finalistas: fp?.finalistas ?? pres?.candidatos.filter((c) => c.valido).slice(0, 2).map(paraFinalista) ?? [],
     gov2t,
     geradoEm: brasilia(),
   };
+  if (fase === "final" || fase === "2t") {
+    const p2 =
+      modo === "simulacao" && f0 === "final"
+        ? null
+        : await getCorrida("presidente", "br", modo, 2).catch(() => null);
+    const v = p2?.candidatos.find((c) => c.eleito) ?? (fase === "final" ? p2?.candidatos[0] : undefined);
+    if (v) valor.vencedor = paraFinalista(v);
+  }
   cacheFase[chave] = { em: agora, valor };
   return valor;
+}
+
+/* ---------- comparativo 1º x 2º turno (presidente) ---------- */
+export interface ComparativoUF {
+  uf: string;
+  t1: { validos: number; votos: Record<string, number>; lider: Finalista | null };
+  t2: { validos: number; votos: Record<string, number>; final: boolean; pct: number };
+}
+export interface Comparativo {
+  fonte: Modo;
+  finalistas: Finalista[];
+  nacional: ComparativoUF;
+  ufs: ComparativoUF[];
+  geradoEm: string;
+}
+
+export async function getComparativo(modo: Modo = MODO_DADOS): Promise<Comparativo | null> {
+  const n2 = await getCorrida("presidente", "br", modo, 2).catch(() => null);
+  if (!n2 || n2.candidatos.length < 2) return null;
+  const fins = n2.candidatos.filter((c) => c.valido).slice(0, 2);
+  const nums = fins.map((c) => c.numero);
+  const pick = (c: Corrida) => Object.fromEntries(nums.map((n) => [n, c.candidatos.find((x) => x.numero === n)?.votos ?? 0]));
+  const montar = async (abr: string): Promise<ComparativoUF | null> => {
+    const [a, b] = await Promise.all([
+      getCorrida("presidente", abr, modo, 1).catch(() => null),
+      abr === "br" ? Promise.resolve(n2) : getCorrida("presidente", abr, modo, 2).catch(() => null),
+    ]);
+    if (!a || !b) return null;
+    const lider = a.candidatos.find((c) => c.valido);
+    return {
+      uf: abr,
+      t1: { validos: a.votos.validos, votos: pick(a), lider: lider ? paraFinalista(lider) : null },
+      t2: { validos: b.votos.validos, votos: pick(b), final: b.final, pct: b.secoes.pct },
+    };
+  };
+  const [nacional, ...ufs] = await Promise.all([montar("br"), ...UFS.map((u) => montar(u.sigla))]);
+  if (!nacional) return null;
+  return {
+    fonte: modo,
+    finalistas: fins.map(paraFinalista),
+    nacional,
+    ufs: ufs.filter((x): x is ComparativoUF => !!x),
+    geradoEm: brasilia(),
+  };
 }

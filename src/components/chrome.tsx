@@ -120,7 +120,7 @@ function navPara(fase?: string) {
       { href: "/assembleias", label: "Assembleias" },
     ];
   return [
-    { href: "/", label: "2º turno" },
+    { href: "/", label: fase === "final" ? "Resultado" : "2º turno" },
     { href: "/primeiro-turno", label: "Presidente · 1º turno" },
     { href: "/governadores", label: "Governadores" },
     { href: "/senado", label: "Senado" },

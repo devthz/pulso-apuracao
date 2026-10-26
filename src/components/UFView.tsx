@@ -15,7 +15,7 @@ import { Avatar, Bar, Num, Panel, PartyTag, ProgressRing, Skeleton, StatusTag, V
 export function UFView({ uf, cidade }: { uf: string; cidade?: string }) {
   const info = UF_MAP[uf];
   const { data: faseInfo } = useFase();
-  const segundo = faseInfo?.fase === "2t";
+  const segundo = faseInfo?.fase === "2t" || faseInfo?.fase === "final";
   const gov2t = !!faseInfo?.gov2t.some((g) => g.uf === uf);
   const { data: gov } = useCorrida("governador", uf);
   const i = UFS.findIndex((u) => u.sigla === uf);
