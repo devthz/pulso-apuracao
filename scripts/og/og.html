@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- Source of src/app/opengraph-image.png (link preview). Regenerate: node scripts/og/render.js -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Geist:wght@400;500&family=Geist+Mono:wght@400;500&display=block" rel="stylesheet" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body { background: #040509; color: #f3f5fb; font-family: 'Geist', sans-serif; position: relative; -webkit-font-smoothing: antialiased; }
+  .grid {
+    position: absolute; inset: 0; opacity: 0.5;
+    background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at 70% 40%, #000 30%, transparent 75%);
+  }
+  .glow { position: absolute; right: -120px; top: -160px; width: 700px; height: 700px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(212,255,58,.16), rgba(212,255,58,0) 62%); }
+  .frame { position: absolute; inset: 56px 64px; display: flex; flex-direction: column; justify-content: space-between; }
+  .top { display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 16px; }
+  .mark { width: 60px; height: 60px; border-radius: 16px; border: 1px solid rgba(255,255,255,.12);
+    background: linear-gradient(135deg, rgba(255,255,255,.1), rgba(255,255,255,0)); display: grid; place-items: center; }
+  .mark svg { width: 44px; filter: drop-shadow(0 0 6px #d4ff3a); }
+  .word { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 30px; letter-spacing: -0.02em; line-height: 1; }
+  .word i { font-style: normal; color: #d4ff3a; }
+  .sub { margin-top: 6px; font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: .22em; color: #8d94ab; }
+  .live { display: flex; align-items: center; gap: 10px; font-family: 'Geist Mono', monospace; font-size: 15px; letter-spacing: .14em;
+    color: #d4ff3a; border: 1px solid rgba(212,255,58,.35); border-radius: 999px; padding: 10px 18px; }
+  .live b { width: 9px; height: 9px; border-radius: 50%; background: #d4ff3a; box-shadow: 0 0 10px #d4ff3a; display: block; }
+  .main { display: flex; align-items: flex-end; justify-content: space-between; }
+  h1 { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 74px; line-height: 1.02; letter-spacing: -0.035em; }
+  h1 span { color: #d4ff3a; }
+  .lead { margin-top: 22px; font-size: 24px; color: #8d94ab; max-width: 560px; line-height: 1.35; }
+  #hemi { width: 420px; height: 230px; margin-bottom: 8px; }
+  .bottom { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,.1); padding-top: 22px;
+    font-family: 'Geist Mono', monospace; font-size: 15px; color: #8d94ab; letter-spacing: .06em; }
+  .chips { display: flex; gap: 10px; }
+  .chips span { border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 6px 12px; color: #f3f5fb; }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="glow"></div>
+  <div class="frame">
+    <div class="top">
+      <div class="logo">
+        <div class="mark">
+          <svg viewBox="0 0 40 20"><path d="M0 10h9l3-7 5 14 4-10 3 3h16" fill="none" stroke="#d4ff3a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </div>
+        <div><div class="word">PULSO<i>.</i></div><div class="sub">ELEIÇÕES 2026</div></div>
+      </div>
+      <div class="live"><b></b>APURAÇÃO AO VIVO</div>
+    </div>
+
+    <div class="main">
+      <div>
+        <h1>A apuração<br />de 2026, <span>voto<br />a voto.</span></h1>
+        <p class="lead">Presidente, governadores, senado, câmara e assembleias em tempo real, direto do TSE.</p>
+      </div>
+      <svg id="hemi" viewBox="0 0 420 230"></svg>
+    </div>
+
+    <div class="bottom">
+      <div class="chips"><span>Mapa por UF</span><span>513 cadeiras</span><span>2º turno</span></div>
+      <div>Dados oficiais do TSE</div>
+    </div>
+  </div>
+
+  <script>
+    // Neutral hemicycle: colour blocks are illustrative, not real results.
+    const svg = document.getElementById('hemi');
+    const colors = ['#d4ff3a', '#3df2ff', '#8b5cff', '#ff3d9a', '#ffb020', '#565d72'];
+    const shares = [0.24, 0.2, 0.17, 0.15, 0.12, 0.12];
+    const rows = 10, total = 513, cx = 210, cy = 222, r0 = 70, r1 = 205;
+    const radii = Array.from({ length: rows }, (_, i) => r0 + ((r1 - r0) * i) / (rows - 1));
+    const sum = radii.reduce((a, b) => a + b, 0);
+    let pts = [], placed = 0;
+    radii.forEach((r, i) => {
+      const n = i === rows - 1 ? total - placed : Math.round((total * r) / sum);
+      placed += n;
+      for (let k = 0; k < n; k++) {
+        const a = Math.PI - (Math.PI * (k + 0.5)) / n;
+        pts.push({ x: cx + r * Math.cos(a), y: cy - r * Math.sin(a), a });
+      }
+    });
+    pts.sort((p, q) => q.a - p.a);
+    let idx = 0, acc = 0;
+    const bounds = shares.map((s) => (acc += s) * total);
+    svg.innerHTML = pts.map((p, i) => {
+      while (i >= bounds[idx]) idx++;
+      return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4.1" fill="${colors[idx]}" opacity="${idx === 5 ? 0.55 : 0.95}"/>`;
+    }).join('');
+  </script>
+</body>
+</html>

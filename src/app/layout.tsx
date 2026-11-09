@@ -6,9 +6,28 @@ import { Background, Header, Spotlight, Ticker } from "@/components/chrome";
 import { Footer } from "@/components/Footer";
 import "./globals.css";
 
+const TITLE = "PULSO · Apuração Eleições 2026 ao vivo";
+const DESCRIPTION =
+  "Acompanhe a apuração das eleições 2026 em todo o Brasil em tempo real: Presidente, Governadores, Senado, Câmara e Assembleias, com dados oficiais do TSE.";
+
+// Link previews: the image comes from src/app/opengraph-image.png (source in scripts/og/og.html).
 export const metadata: Metadata = {
-  title: "PULSO · Apuração Eleições 2026 ao vivo",
-  description: "Acompanhe a apuração das eleições 2026 em todo o Brasil em tempo real: Presidente, Governadores, Senado, Câmara e Assembleias, com dados oficiais do TSE.",
+  metadataBase: new URL(process.env.SITE_URL ?? "https://pulso-apuracao-y6bk.vercel.app"),
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    type: "website",
+    locale: "pt_BR",
+    siteName: "PULSO",
+    url: "/",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
 };
 
 export const viewport: Viewport = { themeColor: "#040509", colorScheme: "dark" };
