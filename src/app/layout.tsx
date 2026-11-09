@@ -12,7 +12,7 @@ const DESCRIPTION =
 
 // Link previews: the image comes from src/app/opengraph-image.png (source in scripts/og/og.html).
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.SITE_URL ?? "https://pulso-apuracao-y6bk.vercel.app"),
+  metadataBase: new URL(process.env.SITE_URL ?? "https://apuracao.thz.dev.br"),
   title: TITLE,
   description: DESCRIPTION,
   openGraph: {
